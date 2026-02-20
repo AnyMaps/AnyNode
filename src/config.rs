@@ -132,6 +132,10 @@ impl Config {
         })
     }
 
+    pub fn load() -> Result<Self, ConfigError> {
+        Self::from_env()
+    }
+
     /// Get the path to the country codes JSON file
     pub fn country_codes_path(&self) -> PathBuf {
         self.whosonfirst_db_path
