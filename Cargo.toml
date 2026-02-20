@@ -42,9 +42,6 @@ uuid = { version = "1", features = ["v4"] }
 # Directory paths
 dirs = "6"
 
-# PMTiles - native Rust library (no CLI dependency needed)
-pmtiles = { version = "0.19", features = ["mmap-async-tokio", "tilejson"] }
-
 [dev-dependencies]
 # Testing utilities
 mockall = "0.14"
