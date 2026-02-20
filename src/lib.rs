@@ -3,6 +3,7 @@ pub mod config;
 pub mod initialization;
 pub mod services;
 pub mod types;
+pub mod utils;
 
 pub use cli::Cli;
 pub use config::{Config, ConfigError};

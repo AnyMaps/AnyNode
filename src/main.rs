@@ -1,10 +1,10 @@
 use anynode::cli::Cli;
 use anynode::config::Config;
 use anynode::initialization::{
-    ensure_directories, initialize_cid_db, initialize_country_service,
-    initialize_extraction_service, initialize_locality_upload_service,
-    initialize_storage_service, initialize_whosonfirst_db, print_final_stats,
-    print_startup_info, validate_config,
+    ensure_database_is_present, ensure_directories, ensure_required_tools, initialize_cid_db,
+    initialize_country_service, initialize_extraction_service, initialize_locality_upload_service,
+    initialize_storage_service, initialize_whosonfirst_db, print_final_stats, print_startup_info,
+    validate_config,
 };
 use anynode::services::LocalityUploadService;
 use std::sync::Arc;
@@ -32,6 +32,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Arc::new(config);
 
     print_startup_info(&config, &cli);
+
+    if let Err(e) = ensure_required_tools(&config).await {
+        error!("Failed to ensure required tools: {}", e);
+        return Err(e.into());
+    }
+
+    if let Err(e) = ensure_database_is_present(&config, &cli).await {
+        error!("Failed to ensure database is present: {}", e);
+        return Err(e.into());
+    }
 
     if let Err(e) = validate_config(&config) {
         error!("Configuration validation failed: {}", e);

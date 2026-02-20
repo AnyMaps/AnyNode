@@ -6,44 +6,23 @@ description = "CLI tool for extracting PMTiles map data and uploading to Logos S
 license = "GPL-3.0-or-later"
 
 [dependencies]
-# Storage bindings (replaces codex-bindings)
 storage-bindings = "0.2"
-
-# Database
 rusqlite = { version = "0.38", features = ["bundled"] }
-
-# Async runtime
 tokio = { version = "1", features = ["full"] }
-
-# Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-
-# CLI
 clap = { version = "4", features = ["derive"] }
-
-# Configuration
 dotenvy = "0.15"
-
-# Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-
-# Error handling
 thiserror = "2"
 anyhow = "1"
-
-# Async utilities
 futures = "0.3"
-
-# UUID generation
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
 uuid = { version = "1", features = ["v4"] }
-
-# Directory paths
 dirs = "6"
 
 [dev-dependencies]
-# Testing utilities
 mockall = "0.14"
 proptest = "1.10"
 tempfile = "3.25"
