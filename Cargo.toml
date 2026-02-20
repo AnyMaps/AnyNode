@@ -1,0 +1,53 @@
+[package]
+name = "anynode"
+version = "0.1.0"
+edition = "2021"
+description = "CLI tool for extracting PMTiles map data and uploading to Logos Storage"
+license = "GPL-3.0-or-later"
+
+[dependencies]
+# Storage bindings (replaces codex-bindings)
+storage-bindings = "0.2"
+
+# Database
+rusqlite = { version = "0.38", features = ["bundled"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Configuration
+dotenvy = "0.15"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Async utilities
+futures = "0.3"
+
+# UUID generation
+uuid = { version = "1", features = ["v4"] }
+
+# Directory paths
+dirs = "6"
+
+# PMTiles - native Rust library (no CLI dependency needed)
+pmtiles = { version = "0.19", features = ["mmap-async-tokio", "tilejson"] }
+
+[dev-dependencies]
+# Testing utilities
+mockall = "0.14"
+proptest = "1.10"
+tempfile = "3.25"
+assert_matches = "1.5"
