@@ -8,6 +8,7 @@ use anynode::initialization::{
 };
 use anynode::services::LocalityUploadService;
 use std::sync::Arc;
+use tokio::signal;
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt;
@@ -93,11 +94,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stats = upload_service.get_stats().await;
     print_final_stats(&stats);
 
+    // Get node info and display
+    match storage_service.get_node_info().await {
+        Ok(node_info) => {
+            info!("Storage node is now running and serving files to the network...");
+            if let Some(peer_id) = node_info.peer_id {
+                info!("Peer ID: {}", peer_id);
+            }
+            if let Some(version) = node_info.version {
+                info!("Storage version: {}", version);
+            }
+        }
+        Err(e) => {
+            info!("Storage node is now running and serving files to the network...");
+            warn!("Failed to get node info: {}", e);
+        }
+    }
+
+    info!("Press Ctrl+C to stop the node gracefully");
+
+    // Keep the node running until interrupted
+    tokio::select! {
+        _ = async {
+            signal::ctrl_c().await.expect("Failed to listen for ctrl+c");
+        } => {
+            info!("Received Ctrl+C, shutting down gracefully...");
+        }
+        _ = async {
+            let mut sig_term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("Failed to setup SIGTERM handler");
+            sig_term.recv().await;
+        } => {
+            info!("Received termination signal, shutting down gracefully...");
+        }
+    }
+
+    // Stop the node gracefully
     info!("Stopping storage node...");
     storage_service.stop_node().await?;
     info!("Storage node stopped successfully");
 
-    info!("AnyNode completed successfully!");
+    info!("AnyNode shutdown complete");
     Ok(())
 }
 
