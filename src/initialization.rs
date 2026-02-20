@@ -241,6 +241,10 @@ async fn download_and_decompress_database(
     config: &Config,
     compressed_path: &str,
 ) -> InitializationResult<()> {
+    if let Some(parent) = Path::new(compressed_path).parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
     info!("Downloading WhosOnFirst database...");
     download_file_with_progress(&config.whosonfirst_db_url, Path::new(compressed_path)).await?;
     info!("Database download completed!");
