@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use storage_bindings::node::config::RepoKind;
-use storage_bindings::{upload_file, StorageConfig, StorageNode, LogLevel};
+use storage_bindings::{debug, upload_file, StorageConfig, StorageNode, LogLevel};
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock};
 use tracing::info;
@@ -54,6 +54,8 @@ pub struct NodeInfo {
     pub peer_id: Option<String>,
     pub version: Option<String>,
     pub repo_path: Option<String>,
+    pub addresses: Vec<String>,
+    pub announce_addresses: Vec<String>,
 }
 
 pub struct StorageService {
@@ -206,10 +208,19 @@ impl StorageService {
         let version = node.version().await.ok();
         let repo_path = node.repo().await.ok();
 
+        // Get debug info for addresses
+        let debug_info = debug(&node).await.ok();
+        let (addresses, announce_addresses) = match debug_info {
+            Some(info) => (info.addrs, info.announce_addresses),
+            None => (Vec::new(), Vec::new()),
+        };
+
         Ok(NodeInfo {
             peer_id,
             version,
             repo_path,
+            addresses,
+            announce_addresses,
         })
     }
 

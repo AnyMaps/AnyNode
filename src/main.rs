@@ -53,7 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let whosonfirst_db = initialize_whosonfirst_db(&config).await?;
     let cid_db = initialize_cid_db(&config).await?;
-    let country_service = initialize_country_service(&config).await?;
+    let country_service = initialize_country_service();
     let storage_service = initialize_storage_service(
         &config,
         cli.get_port(Some(config.discovery_port)),
@@ -100,6 +100,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             info!("Storage node is now running and serving files to the network...");
             if let Some(peer_id) = node_info.peer_id {
                 info!("Peer ID: {}", peer_id);
+            }
+            if !node_info.addresses.is_empty() {
+                info!("Node Addresses:");
+                for addr in &node_info.addresses {
+                    info!("  {}", addr);
+                }
+            }
+            if !node_info.announce_addresses.is_empty() {
+                info!("Announce Addresses:");
+                for addr in &node_info.announce_addresses {
+                    info!("  {}", addr);
+                }
             }
             if let Some(version) = node_info.version {
                 info!("Storage version: {}", version);
