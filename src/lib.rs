@@ -9,7 +9,7 @@ pub use cli::Cli;
 pub use config::{Config, ConfigError};
 pub use initialization::{InitializationError, InitializationResult};
 pub use services::{
-    CountryError, CountryService, DatabaseError, DatabaseService, DownloadResult,
+    CountryService, DatabaseError, DatabaseService, DownloadResult,
     ExtractionError, ExtractionService, LocalityUploadError, LocalityUploadService, NodeInfo,
     StorageError, StorageService, StorageStatus, UploadResult,
 };

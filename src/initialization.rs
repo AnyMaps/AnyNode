@@ -19,8 +19,6 @@ pub enum InitializationError {
     DatabaseError(#[from] crate::services::DatabaseError),
     #[error("Storage error: {0}")]
     StorageError(#[from] crate::services::StorageError),
-    #[error("Country service error: {0}")]
-    CountryError(#[from] crate::services::CountryError),
     #[error("Extraction error: {0}")]
     ExtractionError(#[from] crate::services::ExtractionError),
     #[error("IO error: {0}")]
@@ -71,16 +69,11 @@ pub async fn initialize_cid_db(
     Ok(Arc::new(db))
 }
 
-pub async fn initialize_country_service(
-    config: &Config,
-) -> InitializationResult<CountryService> {
+pub fn initialize_country_service() -> CountryService {
     info!("Initializing country service");
-
-    let country_codes_path = config.country_codes_path();
-    let country_service = CountryService::new(&country_codes_path).await?;
-
+    let country_service = CountryService::new();
     info!("Country service initialized successfully");
-    Ok(country_service)
+    country_service
 }
 
 pub async fn initialize_storage_service(
@@ -175,14 +168,6 @@ pub fn validate_config(config: &Config) -> InitializationResult<()> {
         )));
     }
 
-    let country_codes_path = config.country_codes_path();
-    if !country_codes_path.exists() {
-        return Err(InitializationError::DirectoryNotFound(format!(
-            "Country codes file not found: {:?}",
-            country_codes_path
-        )));
-    }
-
     info!("Configuration validated successfully");
     Ok(())
 }
@@ -270,7 +255,6 @@ pub fn print_startup_info(config: &Config, cli: &crate::cli::Cli) {
     info!("=== AnyNode Starting ===");
     info!("WhosOnFirst DB: {:?}", config.whosonfirst_db_path);
     info!("CID Mappings DB: {:?}", config.cid_db_path);
-    info!("Country Codes: {:?}", config.country_codes_path());
     info!("Localities Dir: {:?}", config.localities_dir);
     info!("Planet PMTiles: {:?}", config.planet_pmtiles_path);
     info!("Storage Port: {}", config.discovery_port);

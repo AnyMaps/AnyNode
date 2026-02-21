@@ -1,35 +1,15 @@
 use crate::types::CountryInfo;
-use serde_json;
 use std::collections::HashMap;
-use std::path::Path;
-use thiserror::Error;
-
-#[derive(Error, Debug)]
-pub enum CountryError {
-    #[error("IO error: {0}")]
-    IoError(#[from] std::io::Error),
-    #[error("JSON error: {0}")]
-    JsonError(#[from] serde_json::Error),
-}
 
 pub struct CountryService {
     country_codes: HashMap<String, String>,
 }
 
 impl CountryService {
-    pub async fn new(country_codes_path: &Path) -> Result<Self, CountryError> {
-        let country_codes = if !country_codes_path.exists() {
-            // Create default country codes if file doesn't exist
-            let default_codes = Self::create_default_country_codes();
-            let json_content = serde_json::to_string_pretty(&default_codes)?;
-            std::fs::write(country_codes_path, json_content)?;
-            default_codes
-        } else {
-            let content = std::fs::read_to_string(country_codes_path)?;
-            serde_json::from_str(&content)?
-        };
-
-        Ok(Self { country_codes })
+    pub fn new() -> Self {
+        Self {
+            country_codes: Self::create_default_country_codes(),
+        }
     }
 
     /// Get the list of countries to process based on target countries
@@ -315,5 +295,11 @@ impl CountryService {
         codes.insert("ZW".to_string(), "Zimbabwe".to_string());
 
         codes
+    }
+}
+
+impl Default for CountryService {
+    fn default() -> Self {
+        Self::new()
     }
 }

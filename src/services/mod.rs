@@ -4,7 +4,7 @@ pub mod extraction;
 pub mod locality_upload;
 pub mod storage;
 
-pub use country::{CountryError, CountryService};
+pub use country::CountryService;
 pub use database::{DatabaseError, DatabaseService};
 pub use extraction::{ExtractionError, ExtractionService};
 pub use locality_upload::{LocalityUploadError, LocalityUploadService};
