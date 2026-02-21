@@ -10,8 +10,8 @@ use tracing::{error, info};
 
 #[derive(Error, Debug)]
 pub enum ExtractionError {
-    #[error("Planet PMTiles path not configured")]
-    PlanetPathNotConfigured,
+    #[error("Planet PMTiles location not configured")]
+    PlanetLocationNotConfigured,
     #[error("Planet PMTiles file not found: {0}")]
     PlanetFileNotFound(String),
     #[error("Extraction failed for locality {0}: {1}")]
@@ -20,6 +20,28 @@ pub enum ExtractionError {
     DatabaseError(String),
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
+}
+
+/// Represents a planet PMTiles source - either a local file or remote URL
+#[derive(Clone, Debug)]
+pub enum PlanetSource {
+    Local(PathBuf),
+    Remote(String),
+}
+
+impl PlanetSource {
+    /// Returns true if this is a remote URL
+    pub fn is_remote(&self) -> bool {
+        matches!(self, PlanetSource::Remote(_))
+    }
+
+    /// Returns the source as a string for passing to pmtiles command
+    pub fn as_str(&self) -> &str {
+        match self {
+            PlanetSource::Local(path) => path.to_str().unwrap_or(""),
+            PlanetSource::Remote(url) => url,
+        }
+    }
 }
 
 pub struct ExtractionService {
@@ -32,27 +54,35 @@ impl ExtractionService {
         Self { config, db_service }
     }
 
-    pub fn get_planet_pmtiles_path(&self) -> Result<PathBuf, ExtractionError> {
-        let path = self
+    /// Get the planet PMTiles source, which can be either a local file or remote URL
+    pub fn get_planet_source(&self) -> Result<PlanetSource, ExtractionError> {
+        let location = self
             .config
-            .planet_pmtiles_path
+            .planet_pmtiles_location
             .as_ref()
-            .ok_or(ExtractionError::PlanetPathNotConfigured)?;
+            .ok_or(ExtractionError::PlanetLocationNotConfigured)?;
 
-        let path = PathBuf::from(path);
-        if !path.exists() {
-            return Err(ExtractionError::PlanetFileNotFound(
-                path.to_string_lossy().to_string(),
-            ));
+        // Check if it's a URL
+        if location.starts_with("http://") || location.starts_with("https://") {
+            info!("Using remote PMTiles source: {}", location);
+            Ok(PlanetSource::Remote(location.clone()))
+        } else {
+            // It's a local file path
+            let path = PathBuf::from(location);
+            if !path.exists() {
+                return Err(ExtractionError::PlanetFileNotFound(
+                    path.to_string_lossy().to_string(),
+                ));
+            }
+            info!("Using local PMTiles file: {}", path.display());
+            Ok(PlanetSource::Local(path))
         }
-
-        Ok(path)
     }
 
     pub async fn extract_locality(
         &self,
         locality: &Locality,
-        planet_path: &Path,
+        planet_source: &PlanetSource,
         country_dir: &Path,
     ) -> Result<(), ExtractionError> {
         let output_path = country_dir.join(format!("{}.pmtiles", locality.id));
@@ -78,7 +108,7 @@ impl ExtractionService {
         let output = tokio::process::Command::new("pmtiles")
             .args([
                 "extract",
-                planet_path.to_str().unwrap(),
+                planet_source.as_str(),
                 output_path.to_str().unwrap(),
                 &format!("--bbox={}", bbox),
             ])
@@ -111,7 +141,7 @@ impl ExtractionService {
         &self,
         country_codes: &[String],
     ) -> Result<(), ExtractionError> {
-        let planet_path = self.get_planet_pmtiles_path()?;
+        let planet_source = self.get_planet_source()?;
 
         for country_code in country_codes {
             info!("Processing country: {}", country_code);
@@ -167,7 +197,7 @@ impl ExtractionService {
             let completed_count = Arc::new(std::sync::atomic::AtomicUsize::new(existing_count));
 
             for locality in localities {
-                let planet_path = planet_path.clone();
+                let planet_source = planet_source.clone();
                 let country_dir = country_dir.clone();
                 let semaphore = semaphore.clone();
                 let extraction_service = self.clone();
@@ -176,7 +206,7 @@ impl ExtractionService {
                 let task = tokio::spawn(async move {
                     let _permit = semaphore.acquire().await.unwrap();
                     let result = extraction_service
-                        .extract_locality(&locality, &planet_path, &country_dir)
+                        .extract_locality(&locality, &planet_source, &country_dir)
                         .await;
 
                     if result.is_ok() {

@@ -1,6 +1,6 @@
 use dotenvy::dotenv;
 use std::env;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Debug)]
 pub enum ConfigError {
@@ -40,7 +40,7 @@ pub struct Config {
     // Processing options
     pub target_countries: Vec<String>,
     pub max_concurrent_extractions: usize,
-    pub planet_pmtiles_path: Option<String>,
+    pub planet_pmtiles_location: Option<String>,
 
     // URLs
     pub whosonfirst_db_url: String,
@@ -108,7 +108,8 @@ impl Config {
             .map_err(|e| ConfigError::InvalidValue(format!("MAX_CONCURRENT_EXTRACTIONS: {}", e)))?;
 
         // Optional - empty string means None
-        let planet_pmtiles_path = env::var("PLANET_PMTILES_PATH")
+        // Can be a local file path or a remote URL (http:// or https://)
+        let planet_pmtiles_location = env::var("PLANET_PMTILES_LOCATION")
             .ok()
             .filter(|s| !s.is_empty());
 
@@ -127,20 +128,12 @@ impl Config {
             bzip2_cmd,
             target_countries,
             max_concurrent_extractions,
-            planet_pmtiles_path,
+            planet_pmtiles_location,
             whosonfirst_db_url,
         })
     }
 
     pub fn load() -> Result<Self, ConfigError> {
         Self::from_env()
-    }
-
-    /// Get the path to the country codes JSON file
-    pub fn country_codes_path(&self) -> PathBuf {
-        self.whosonfirst_db_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join("country-codes.json")
     }
 }
