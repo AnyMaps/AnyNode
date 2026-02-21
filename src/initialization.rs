@@ -139,11 +139,14 @@ pub async fn ensure_directories(config: &Config) -> InitializationResult<()> {
         info!("Created localities directory: {:?}", config.localities_dir);
     }
 
-    if let Some(planet_path) = &config.planet_pmtiles_path {
-        if let Some(parent) = PathBuf::from(planet_path).parent() {
-            if !parent.exists() {
-                tokio::fs::create_dir_all(parent).await?;
-                info!("Created planet file directory: {:?}", parent);
+    // Only create directory if planet_pmtiles_location is a local file path
+    if let Some(planet_location) = &config.planet_pmtiles_location {
+        if !planet_location.starts_with("http://") && !planet_location.starts_with("https://") {
+            if let Some(parent) = PathBuf::from(planet_location).parent() {
+                if !parent.exists() {
+                    tokio::fs::create_dir_all(parent).await?;
+                    info!("Created planet file directory: {:?}", parent);
+                }
             }
         }
     }
@@ -256,7 +259,7 @@ pub fn print_startup_info(config: &Config, cli: &crate::cli::Cli) {
     info!("WhosOnFirst DB: {:?}", config.whosonfirst_db_path);
     info!("CID Mappings DB: {:?}", config.cid_db_path);
     info!("Localities Dir: {:?}", config.localities_dir);
-    info!("Planet PMTiles: {:?}", config.planet_pmtiles_path);
+    info!("Planet PMTiles: {:?}", config.planet_pmtiles_location);
     info!("Storage Port: {}", config.discovery_port);
     info!("Storage Data Dir: {:?}", config.storage_data_dir);
     info!("Max Concurrent Extractions: {}", config.max_concurrent_extractions);
