@@ -26,6 +26,7 @@ pub struct Config {
     pub storage_quota: u64,
     pub discovery_port: u16,
     pub max_peers: u32,
+    pub bootstrap_nodes: Vec<String>,
 
     // Database paths
     pub whosonfirst_db_path: PathBuf,
@@ -113,6 +114,13 @@ impl Config {
             .ok()
             .filter(|s| !s.is_empty());
 
+        // Optional - comma-separated SPR URIs for bootstrap nodes
+        let bootstrap_nodes: Vec<String> = env::var("STORAGE_BOOTSTRAP_NODES")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .map(|s| s.split(',').map(|s| s.trim().to_string()).collect())
+            .unwrap_or_default();
+
         // URLs (required)
         let whosonfirst_db_url = env::var("WHOSONFIRST_DB_URL")
             .map_err(|_| ConfigError::MissingEnvVar("WHOSONFIRST_DB_URL".to_string()))?;
@@ -122,6 +130,7 @@ impl Config {
             storage_quota,
             discovery_port,
             max_peers,
+            bootstrap_nodes,
             whosonfirst_db_path,
             cid_db_path,
             localities_dir,

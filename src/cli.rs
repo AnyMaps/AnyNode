@@ -42,6 +42,13 @@ pub struct Cli {
 
     #[arg(short, long, help = "Quiet mode (minimal output)")]
     pub quiet: bool,
+
+    #[arg(
+        long,
+        value_name = "SPR_URI",
+        help = "Bootstrap node SPR URI (can be repeated for multiple nodes)"
+    )]
+    pub bootstrap: Vec<String>,
 }
 
 impl Cli {
@@ -76,6 +83,14 @@ impl Cli {
             "debug"
         } else {
             "info"
+        }
+    }
+
+    pub fn get_bootstrap_nodes(&self, env_nodes: Vec<String>) -> Vec<String> {
+        if !self.bootstrap.is_empty() {
+            self.bootstrap.clone()
+        } else {
+            env_nodes
         }
     }
 }

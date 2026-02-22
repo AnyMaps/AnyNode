@@ -80,6 +80,7 @@ pub async fn initialize_storage_service(
     config: &Config,
     port_override: Option<u16>,
     data_dir_override: Option<PathBuf>,
+    bootstrap_nodes: Vec<String>,
 ) -> InitializationResult<Arc<StorageService>> {
     info!("Initializing storage service");
 
@@ -88,11 +89,16 @@ pub async fn initialize_storage_service(
 
     tokio::fs::create_dir_all(&data_dir).await?;
 
+    if !bootstrap_nodes.is_empty() {
+        info!("Using {} bootstrap node(s)", bootstrap_nodes.len());
+    }
+
     let storage_service = StorageService::new(
         &data_dir,
         config.storage_quota,
         port,
         config.max_peers,
+        bootstrap_nodes,
     )
     .await?;
 

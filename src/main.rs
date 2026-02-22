@@ -54,10 +54,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let whosonfirst_db = initialize_whosonfirst_db(&config).await?;
     let cid_db = initialize_cid_db(&config).await?;
     let country_service = initialize_country_service();
+    let bootstrap_nodes = cli.get_bootstrap_nodes(config.bootstrap_nodes.clone());
     let storage_service = initialize_storage_service(
         &config,
         cli.get_port(Some(config.discovery_port)),
         cli.get_data_dir(Some(config.storage_data_dir.clone())),
+        bootstrap_nodes,
     )
     .await?;
     let extraction_service = initialize_extraction_service(&config, whosonfirst_db.clone())?;
@@ -112,6 +114,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 for addr in &node_info.announce_addresses {
                     info!("  {}", addr);
                 }
+            }
+            if let Some(spr) = node_info.spr {
+                info!("Signed Peer Record:\n  {}", spr);
+            }
+            info!("Discovery table nodes: {}", node_info.discovery_node_count);
+            if node_info.discovery_node_count > 0 {
+                info!("Successfully connected to the network via bootstrap nodes");
+            } else {
+                warn!("No peers in discovery table - bootstrap may have failed");
             }
             if let Some(version) = node_info.version {
                 info!("Storage version: {}", version);

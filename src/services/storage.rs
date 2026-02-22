@@ -56,6 +56,8 @@ pub struct NodeInfo {
     pub repo_path: Option<String>,
     pub addresses: Vec<String>,
     pub announce_addresses: Vec<String>,
+    pub spr: Option<String>,
+    pub discovery_node_count: usize,
 }
 
 pub struct StorageService {
@@ -70,14 +72,19 @@ impl StorageService {
         storage_quota: u64,
         discovery_port: u16,
         max_peers: u32,
+        bootstrap_nodes: Vec<String>,
     ) -> Result<Self, StorageError> {
-        let config = StorageConfig::new()
+        let mut config = StorageConfig::new()
             .log_level(LogLevel::Info)
             .data_dir(data_dir)
             .storage_quota(storage_quota)
             .max_peers(max_peers)
             .discovery_port(discovery_port)
             .repo_kind(RepoKind::LevelDb);
+
+        for node in bootstrap_nodes {
+            config = config.add_bootstrap_node(node);
+        }
 
         let service = Self {
             node: Arc::new(Mutex::new(None)),
@@ -208,11 +215,15 @@ impl StorageService {
         let version = node.version().await.ok();
         let repo_path = node.repo().await.ok();
 
-        // Get debug info for addresses
+        // Get debug info for addresses and discovery table
         let debug_info = debug(&node).await.ok();
-        let (addresses, announce_addresses) = match debug_info {
-            Some(info) => (info.addrs, info.announce_addresses),
-            None => (Vec::new(), Vec::new()),
+        let (addresses, announce_addresses, spr, discovery_node_count) = match debug_info {
+            Some(info) => {
+                let spr = if info.spr.is_empty() { None } else { Some(info.spr.clone()) };
+                let node_count = info.discovery_node_count();
+                (info.addrs, info.announce_addresses, spr, node_count)
+            }
+            None => (Vec::new(), Vec::new(), None, 0),
         };
 
         Ok(NodeInfo {
@@ -221,6 +232,8 @@ impl StorageService {
             repo_path,
             addresses,
             announce_addresses,
+            spr,
+            discovery_node_count,
         })
     }
 
