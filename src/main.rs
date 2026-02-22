@@ -6,12 +6,18 @@ use anynode::initialization::{
     initialize_storage_service, initialize_whosonfirst_db, print_final_stats, print_startup_info,
     validate_config,
 };
-use anynode::services::LocalityUploadService;
+use anynode::services::{LocalityUploadService, StorageStatus};
+use indicatif::{ProgressBar, ProgressStyle};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::signal;
+use tokio::time::interval;
 use tracing::{error, info, warn};
+use tracing_indicatif::IndicatifLayer;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -21,10 +27,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(log_level));
 
-    fmt()
-        .with_env_filter(filter)
-        .with_target(false)
-        .with_thread_ids(true)
+    // Set up tracing with indicatif layer to keep progress bar visible
+    let indicatif_layer = IndicatifLayer::new();
+
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(fmt::layer().with_writer(indicatif_layer.get_stderr_writer()))
+        .with(indicatif_layer)
         .init();
 
     info!("AnyNode v0.1.0 starting...");
@@ -140,6 +149,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Press Ctrl+C to stop the node gracefully");
 
+    // Create progress bar for node status monitoring
+    let progress_bar = create_node_status_progress_bar();
+    let storage_service_clone = storage_service.clone();
+    let monitor_handle = tokio::spawn(async move {
+        monitor_node_status(storage_service_clone, progress_bar).await;
+    });
+
     // Keep the node running until interrupted
     tokio::select! {
         _ = async {
@@ -155,6 +171,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             info!("Received termination signal, shutting down gracefully...");
         }
     }
+
+    // Stop the monitor
+    monitor_handle.abort();
 
     // Stop the node gracefully
     info!("Stopping storage node...");
@@ -187,4 +206,56 @@ async fn upload_localities(
 
     info!("Locality upload process completed");
     Ok(())
+}
+
+/// Create an infinite progress bar for node status monitoring
+fn create_node_status_progress_bar() -> ProgressBar {
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(
+        ProgressStyle::with_template("{spinner:.green} {msg}")
+            .unwrap()
+            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+    );
+    pb.enable_steady_tick(Duration::from_millis(100));
+    pb
+}
+
+/// Monitor and display node status with discovery peer count
+async fn monitor_node_status(
+    storage_service: Arc<anynode::services::StorageService>,
+    progress_bar: ProgressBar,
+) {
+    let mut tick = interval(Duration::from_secs(2));
+
+    loop {
+        tick.tick().await;
+
+        let status = storage_service.get_status().await;
+
+        // Try to get node info for discovery count
+        match storage_service.get_node_info().await {
+            Ok(node_info) => {
+                let status_str = format_status(&status);
+                progress_bar.set_message(format!(
+                    "Status: {} | Discovery: {} nodes",
+                    status_str, node_info.discovery_node_count
+                ));
+            }
+            Err(_) => {
+                let status_str = format_status(&status);
+                progress_bar.set_message(format!("Status: {}", status_str));
+            }
+        }
+    }
+}
+
+/// Format storage status for display
+fn format_status(status: &StorageStatus) -> &'static str {
+    match status {
+        StorageStatus::Disconnected => "Disconnected",
+        StorageStatus::Initialized => "Initialized",
+        StorageStatus::Connecting => "Connecting",
+        StorageStatus::Connected => "Connected",
+        StorageStatus::Error => "Error",
+    }
 }
