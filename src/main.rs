@@ -55,11 +55,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cid_db = initialize_cid_db(&config).await?;
     let country_service = initialize_country_service();
     let bootstrap_nodes = cli.get_bootstrap_nodes(config.bootstrap_nodes.clone());
+    let nat = cli.get_nat(config.nat.clone());
+    let listen_addrs = cli.get_listen_addrs(config.listen_addrs.clone());
     let storage_service = initialize_storage_service(
         &config,
         cli.get_port(Some(config.discovery_port)),
         cli.get_data_dir(Some(config.storage_data_dir.clone())),
         bootstrap_nodes,
+        Some(nat),
+        Some(listen_addrs),
     )
     .await?;
     let extraction_service = initialize_extraction_service(&config, whosonfirst_db.clone())?;

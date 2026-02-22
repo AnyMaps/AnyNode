@@ -28,6 +28,10 @@ pub struct Config {
     pub max_peers: u32,
     pub bootstrap_nodes: Vec<String>,
 
+    // Network discoverability configuration
+    pub nat: String,
+    pub listen_addrs: Vec<String>,
+
     // Database paths
     pub whosonfirst_db_path: PathBuf,
     pub cid_db_path: PathBuf,
@@ -125,6 +129,17 @@ impl Config {
             .map(|s| s.split(',').map(|s| s.trim().to_string()).collect())
             .unwrap_or_default();
 
+        // Network discoverability (all required)
+        let nat = env::var("STORAGE_NAT")
+            .map_err(|_| ConfigError::MissingEnvVar("STORAGE_NAT".to_string()))?;
+
+        let listen_addrs: Vec<String> = env::var("STORAGE_LISTEN_ADDRS")
+            .map_err(|_| ConfigError::MissingEnvVar("STORAGE_LISTEN_ADDRS".to_string()))?
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
         // URLs (required)
         let whosonfirst_db_url = env::var("WHOSONFIRST_DB_URL")
             .map_err(|_| ConfigError::MissingEnvVar("WHOSONFIRST_DB_URL".to_string()))?;
@@ -135,6 +150,8 @@ impl Config {
             discovery_port,
             max_peers,
             bootstrap_nodes,
+            nat,
+            listen_addrs,
             whosonfirst_db_path,
             cid_db_path,
             localities_dir,

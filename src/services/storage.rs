@@ -73,6 +73,8 @@ impl StorageService {
         discovery_port: u16,
         max_peers: u32,
         bootstrap_nodes: Vec<String>,
+        nat: String,
+        listen_addrs: Vec<String>,
     ) -> Result<Self, StorageError> {
         let mut config = StorageConfig::new()
             .log_level(LogLevel::Info)
@@ -80,7 +82,12 @@ impl StorageService {
             .storage_quota(storage_quota)
             .max_peers(max_peers)
             .discovery_port(discovery_port)
-            .repo_kind(RepoKind::LevelDb);
+            .repo_kind(RepoKind::LevelDb)
+            .nat(nat);
+
+        for addr in listen_addrs {
+            config = config.add_listen_addr(addr);
+        }
 
         for node in bootstrap_nodes {
             config = config.add_bootstrap_node(node);

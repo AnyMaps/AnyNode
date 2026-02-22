@@ -49,6 +49,20 @@ pub struct Cli {
         help = "Bootstrap node SPR URI (can be repeated for multiple nodes)"
     )]
     pub bootstrap: Vec<String>,
+
+    #[arg(
+        long,
+        value_name = "METHOD",
+        help = "NAT traversal method: any, none, upnp, pmp, or extip:<IP> (overrides STORAGE_NAT env var)"
+    )]
+    pub nat: Option<String>,
+
+    #[arg(
+        long,
+        value_name = "ADDRS",
+        help = "Listen addresses (comma-separated multi-addresses, overrides STORAGE_LISTEN_ADDRS env var)"
+    )]
+    pub listen_addrs: Option<String>,
 }
 
 impl Cli {
@@ -91,6 +105,22 @@ impl Cli {
             self.bootstrap.clone()
         } else {
             env_nodes
+        }
+    }
+
+    pub fn get_nat(&self, env_nat: String) -> String {
+        self.nat.clone().unwrap_or(env_nat)
+    }
+
+    pub fn get_listen_addrs(&self, env_addrs: Vec<String>) -> Vec<String> {
+        if let Some(addrs) = &self.listen_addrs {
+            addrs
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        } else {
+            env_addrs
         }
     }
 }

@@ -81,11 +81,15 @@ pub async fn initialize_storage_service(
     port_override: Option<u16>,
     data_dir_override: Option<PathBuf>,
     bootstrap_nodes: Vec<String>,
+    nat_override: Option<String>,
+    listen_addrs_override: Option<Vec<String>>,
 ) -> InitializationResult<Arc<StorageService>> {
     info!("Initializing storage service");
 
     let port = port_override.unwrap_or(config.discovery_port);
     let data_dir = data_dir_override.unwrap_or_else(|| config.storage_data_dir.clone());
+    let nat = nat_override.unwrap_or_else(|| config.nat.clone());
+    let listen_addrs = listen_addrs_override.unwrap_or_else(|| config.listen_addrs.clone());
 
     tokio::fs::create_dir_all(&data_dir).await?;
 
@@ -93,12 +97,17 @@ pub async fn initialize_storage_service(
         info!("Using {} bootstrap node(s)", bootstrap_nodes.len());
     }
 
+    info!("Using NAT configuration: {}", nat);
+    info!("Using listen addresses: {:?}", listen_addrs);
+
     let storage_service = StorageService::new(
         &data_dir,
         config.storage_quota,
         port,
         config.max_peers,
         bootstrap_nodes,
+        nat,
+        listen_addrs,
     )
     .await?;
 
