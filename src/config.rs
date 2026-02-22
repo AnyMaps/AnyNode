@@ -37,6 +37,7 @@ pub struct Config {
 
     // Tool commands
     pub bzip2_cmd: String,
+    pub pmtiles_cmd: String,
 
     // Processing options
     pub target_countries: Vec<String>,
@@ -95,6 +96,9 @@ impl Config {
         let bzip2_cmd = env::var("BZIP2_CMD")
             .map_err(|_| ConfigError::MissingEnvVar("BZIP2_CMD".to_string()))?;
 
+        let pmtiles_cmd = env::var("PMTILES_CMD")
+            .map_err(|_| ConfigError::MissingEnvVar("PMTILES_CMD".to_string()))?;
+
         // Processing options
         let target_countries: Vec<String> = env::var("TARGET_COUNTRIES")
             .map_err(|_| ConfigError::MissingEnvVar("TARGET_COUNTRIES".to_string()))?
@@ -135,6 +139,7 @@ impl Config {
             cid_db_path,
             localities_dir,
             bzip2_cmd,
+            pmtiles_cmd,
             target_countries,
             max_concurrent_extractions,
             planet_pmtiles_location,

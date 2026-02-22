@@ -105,7 +105,7 @@ impl ExtractionService {
             locality.id, locality.name, bbox
         );
 
-        let output = tokio::process::Command::new("pmtiles")
+        let output = tokio::process::Command::new(&self.config.pmtiles_cmd)
             .args([
                 "extract",
                 planet_source.as_str(),
