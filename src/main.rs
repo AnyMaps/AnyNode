@@ -83,8 +83,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &config,
     )?;
 
-    let countries = country_service.get_countries_to_process(&config.target_countries);
-    info!("Processing {} countries", countries.len());
+    let locality_ids = cli.get_locality_ids(config.locality_ids.clone());
+
+    if !locality_ids.is_empty() {
+        info!("Processing {} specific locality IDs", locality_ids.len());
+    } else {
+        let countries = country_service.get_countries_to_process(&config.target_countries);
+        info!("Processing {} countries", countries.len());
+    }
 
     info!("Starting storage node...");
     storage_service.start_node().await?;
@@ -92,9 +98,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if !cli.should_skip_extract() {
         info!("Step 1: Extracting PMTiles from planet file...");
-        if let Err(e) = extract_pmtiles(&extraction_service, &countries, &whosonfirst_db).await {
-            error!("Failed to extract PMTiles: {}", e);
-            warn!("Continuing with existing PMTiles if available...");
+        if !locality_ids.is_empty() {
+            if let Err(e) = extraction_service.extract_localities_by_ids(&locality_ids).await {
+                error!("Failed to extract PMTiles: {}", e);
+                warn!("Continuing with existing PMTiles if available...");
+            }
+        } else {
+            let countries = country_service.get_countries_to_process(&config.target_countries);
+            if let Err(e) = extract_pmtiles(&extraction_service, &countries, &whosonfirst_db).await {
+                error!("Failed to extract PMTiles: {}", e);
+                warn!("Continuing with existing PMTiles if available...");
+            }
         }
     } else {
         info!("Step 1: Skipping PMTiles extraction (--no-extract flag set)");

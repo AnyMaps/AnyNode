@@ -45,6 +45,7 @@ pub struct Config {
 
     // Processing options
     pub target_countries: Vec<String>,
+    pub locality_ids: Vec<u32>,
     pub max_concurrent_extractions: usize,
     pub planet_pmtiles_location: Option<String>,
 
@@ -111,6 +112,19 @@ impl Config {
             .filter(|s| !s.is_empty())
             .collect();
 
+        // Optional - comma-separated locality IDs to process (overrides TARGET_COUNTRIES)
+        let locality_ids: Vec<u32> = env::var("LOCALITY_IDS")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                s.split(',')
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                    .filter_map(|s| s.parse::<u32>().ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+
         let max_concurrent_extractions: usize = env::var("MAX_CONCURRENT_EXTRACTIONS")
             .map_err(|_| ConfigError::MissingEnvVar("MAX_CONCURRENT_EXTRACTIONS".to_string()))?
             .parse()
@@ -158,6 +172,7 @@ impl Config {
             bzip2_cmd,
             pmtiles_cmd,
             target_countries,
+            locality_ids,
             max_concurrent_extractions,
             planet_pmtiles_location,
             whosonfirst_db_url,

@@ -162,6 +162,40 @@ impl DatabaseService {
         .await?
     }
 
+    pub async fn get_localities_by_ids(
+        &self,
+        locality_ids: &[u32],
+    ) -> Result<Vec<Locality>, DatabaseError> {
+        if locality_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let conn = self.conn.clone();
+        let locality_ids: Vec<i64> = locality_ids.iter().map(|&id| id as i64).collect();
+
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.blocking_lock();
+
+            let placeholders: Vec<String> = locality_ids.iter().map(|_| "?".to_string()).collect();
+            let placeholder_str = placeholders.join(",");
+
+            let query_str = format!(
+                "SELECT id, name, country, placetype, latitude, longitude, min_longitude, min_latitude, max_longitude, max_latitude \
+                 FROM spr \
+                 WHERE id IN ({}) AND placetype = 'locality' AND is_current = 1 AND is_deprecated = 0",
+                placeholder_str
+            );
+
+            let mut stmt = conn.prepare(&query_str)?;
+            let params: Vec<&dyn rusqlite::ToSql> = locality_ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+            let rows = stmt.query_map(params.as_slice(), |row| Locality::from_row(row))?;
+
+            let localities = rows.collect::<Result<Vec<_>, _>>()?;
+            Ok(localities)
+        })
+        .await?
+    }
+
     pub async fn batch_insert_cid_mappings(
         &self,
         mappings: &[(String, u32, String, u64)],

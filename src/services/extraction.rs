@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::Semaphore;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[derive(Error, Debug)]
 pub enum ExtractionError {
@@ -249,6 +249,101 @@ impl ExtractionService {
                     format!("Some extraction tasks failed for country: {}", country_code),
                 ));
             }
+        }
+
+        Ok(())
+    }
+
+    pub async fn extract_localities_by_ids(
+        &self,
+        locality_ids: &[u32],
+    ) -> Result<(), ExtractionError> {
+        let planet_source = self.get_planet_source()?;
+
+        let localities = self
+            .db_service
+            .get_localities_by_ids(locality_ids)
+            .await
+            .map_err(|e| ExtractionError::DatabaseError(e.to_string()))?;
+
+        if localities.is_empty() {
+            info!("No valid localities found for provided IDs");
+            return Ok(());
+        }
+
+        info!(
+            "Found {} localities for {} provided IDs",
+            localities.len(),
+            locality_ids.len()
+        );
+
+        let found_ids: std::collections::HashSet<i64> =
+            localities.iter().map(|l| l.id).collect();
+        for id in locality_ids {
+            if !found_ids.contains(&(*id as i64)) {
+                warn!(
+                    "Locality ID {} not found in database or not a valid locality",
+                    id
+                );
+            }
+        }
+
+        let mut by_country: HashMap<String, Vec<Locality>> = HashMap::new();
+        for locality in localities {
+            by_country
+                .entry(locality.country.clone())
+                .or_insert_with(Vec::new)
+                .push(locality);
+        }
+
+        let semaphore = Arc::new(Semaphore::new(self.config.max_concurrent_extractions));
+        let mut tasks = Vec::new();
+
+        for (country_code, country_localities) in by_country {
+            let country_dir = self.config.localities_dir.join(&country_code);
+            if !country_dir.exists() {
+                std::fs::create_dir_all(&country_dir)?;
+            }
+
+            for locality in country_localities {
+                let planet_source = planet_source.clone();
+                let country_dir = country_dir.clone();
+                let semaphore = semaphore.clone();
+                let extraction_service = self.clone();
+
+                let task = tokio::spawn(async move {
+                    let _permit = semaphore.acquire().await.unwrap();
+                    extraction_service
+                        .extract_locality(&locality, &planet_source, &country_dir)
+                        .await
+                });
+
+                tasks.push(task);
+            }
+        }
+
+        let results = futures::future::join_all(tasks).await;
+
+        let mut has_errors = false;
+        for result in results {
+            match result {
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => {
+                    error!("Extraction task failed: {}", e);
+                    has_errors = true;
+                }
+                Err(e) => {
+                    error!("Extraction task panicked: {:?}", e);
+                    has_errors = true;
+                }
+            }
+        }
+
+        if has_errors {
+            return Err(ExtractionError::ExtractionFailed(
+                0,
+                "Some extraction tasks failed".to_string(),
+            ));
         }
 
         Ok(())

@@ -63,6 +63,13 @@ pub struct Cli {
         help = "Listen addresses (comma-separated multi-addresses, overrides STORAGE_LISTEN_ADDRS env var)"
     )]
     pub listen_addrs: Option<String>,
+
+    #[arg(
+        long,
+        value_name = "IDS",
+        help = "Comma-separated locality IDs to extract (overrides LOCALITY_IDS and TARGET_COUNTRIES env vars)"
+    )]
+    pub locality_ids: Option<String>,
 }
 
 impl Cli {
@@ -121,6 +128,18 @@ impl Cli {
                 .collect()
         } else {
             env_addrs
+        }
+    }
+
+    pub fn get_locality_ids(&self, env_ids: Vec<u32>) -> Vec<u32> {
+        if let Some(ids) = &self.locality_ids {
+            ids.split(',')
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .filter_map(|s| s.parse::<u32>().ok())
+                .collect()
+        } else {
+            env_ids
         }
     }
 }
