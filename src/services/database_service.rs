@@ -19,9 +19,6 @@ pub struct DatabaseService {
 }
 
 impl DatabaseService {
-    /// Create a new database service
-    /// For WhosOnFirst database, this opens the existing database
-    /// For CID database, this creates the database and tables if needed
     pub async fn new(database_path: &str, create_cid_tables: bool) -> Result<Self, DatabaseError> {
         let conn = Connection::open(database_path)?;
 
@@ -29,7 +26,6 @@ impl DatabaseService {
             conn: Arc::new(Mutex::new(conn)),
         };
 
-        // Create CID tables if requested (for CID mappings database)
         if create_cid_tables {
             service.create_cid_tables().await?;
         }
@@ -43,7 +39,6 @@ impl DatabaseService {
         tokio::task::spawn_blocking(move || {
             let conn = conn.blocking_lock();
 
-            // Create CID mapping table
             let create_cid_table = r#"
             CREATE TABLE IF NOT EXISTS locality_cids (
                 country_code TEXT NOT NULL,
@@ -55,7 +50,6 @@ impl DatabaseService {
             )
             "#;
 
-            // Index for fast CID lookups
             let create_cid_index = r#"
             CREATE INDEX IF NOT EXISTS idx_locality_cids_lookup
             ON locality_cids(country_code, locality_id)
@@ -215,7 +209,6 @@ impl DatabaseService {
             "#;
 
             for (country_code, locality_id, cid, file_size) in mappings {
-                // Convert u32/u64 to i64 for SQLite (doesn't support unsigned)
                 let locality_id_i64 = locality_id as i64;
                 let file_size_i64 = file_size as i64;
                 tx.execute(
@@ -235,7 +228,6 @@ impl DatabaseService {
         .await?
     }
 
-    /// Check if a locality already has a CID mapping
     pub async fn has_cid_mapping(
         &self,
         country_code: &str,
@@ -281,5 +273,28 @@ impl DatabaseService {
             Ok((total_count as u64, countries_count as u64))
         })
         .await?
+    }
+
+    pub async fn get_all_countries(&self) -> Result<Vec<String>, DatabaseError> {
+        let conn = self.conn.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.blocking_lock();
+
+            let mut stmt = conn.prepare(
+                "SELECT DISTINCT country FROM spr WHERE country IS NOT NULL AND country != '' ORDER BY country"
+            )?;
+
+            let country_iter = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            let mut countries = Vec::new();
+
+            for country in country_iter {
+                countries.push(country?);
+            }
+
+            Ok::<Vec<String>, rusqlite::Error>(countries)
+        })
+        .await?
+        .map_err(|e| DatabaseError::RusqliteError(e))
     }
 }

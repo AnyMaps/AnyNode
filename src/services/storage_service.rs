@@ -222,7 +222,6 @@ impl StorageService {
         let version = node.version().await.ok();
         let repo_path = node.repo().await.ok();
 
-        // Get debug info for addresses and discovery table
         let debug_info = debug(&node).await.ok();
         let (addresses, announce_addresses, spr, discovery_node_count) = match debug_info {
             Some(info) => {
@@ -272,7 +271,6 @@ impl StorageService {
             file_size
         );
 
-        // Create upload options
         let file_path_owned = file_path.to_path_buf();
         let upload_options = storage_bindings::UploadOptions::new()
             .filepath(&file_path_owned)
@@ -281,7 +279,6 @@ impl StorageService {
                 info!("Upload progress: {}%", percentage);
             });
 
-        // Perform upload
         let result = upload_file(&node, upload_options)
             .await
             .map_err(|e| StorageError::UploadFailed(e.to_string()))?;

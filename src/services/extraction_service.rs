@@ -22,7 +22,6 @@ pub enum ExtractionError {
     IoError(#[from] std::io::Error),
 }
 
-/// Represents a planet PMTiles source - either a local file or remote URL
 #[derive(Clone, Debug)]
 pub enum PlanetSource {
     Local(PathBuf),
@@ -30,12 +29,10 @@ pub enum PlanetSource {
 }
 
 impl PlanetSource {
-    /// Returns true if this is a remote URL
     pub fn is_remote(&self) -> bool {
         matches!(self, PlanetSource::Remote(_))
     }
 
-    /// Returns the source as a string for passing to pmtiles command
     pub fn as_str(&self) -> &str {
         match self {
             PlanetSource::Local(path) => path.to_str().unwrap_or(""),
@@ -54,7 +51,6 @@ impl ExtractionService {
         Self { config, db_service }
     }
 
-    /// Get the planet PMTiles source, which can be either a local file or remote URL
     pub fn get_planet_source(&self) -> Result<PlanetSource, ExtractionError> {
         let location = self
             .config
@@ -62,12 +58,10 @@ impl ExtractionService {
             .as_ref()
             .ok_or(ExtractionError::PlanetLocationNotConfigured)?;
 
-        // Check if it's a URL
         if location.starts_with("http://") || location.starts_with("https://") {
             info!("Using remote PMTiles source: {}", location);
             Ok(PlanetSource::Remote(location.clone()))
         } else {
-            // It's a local file path
             let path = PathBuf::from(location);
             if !path.exists() {
                 return Err(ExtractionError::PlanetFileNotFound(

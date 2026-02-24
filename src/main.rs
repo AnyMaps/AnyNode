@@ -1,18 +1,14 @@
+use anynode::app::NodeRunner;
 use anynode::cli::Cli;
 use anynode::config::Config;
 use anynode::initialization::{
     ensure_database_is_present, ensure_directories, ensure_required_tools, initialize_cid_db,
     initialize_country_service, initialize_extraction_service, initialize_locality_upload_service,
-    initialize_storage_service, initialize_whosonfirst_db, print_final_stats, print_startup_info,
-    validate_config,
+    initialize_storage_service, initialize_whosonfirst_db, print_startup_info, validate_config,
 };
-use anynode::services::{LocalityUploadService, StorageStatus};
-use indicatif::{ProgressBar, ProgressStyle};
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::signal;
-use tokio::time::interval;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use tracing_indicatif::IndicatifLayer;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt;
@@ -62,7 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let whosonfirst_db = initialize_whosonfirst_db(&config).await?;
     let cid_db = initialize_cid_db(&config).await?;
-    let country_service = initialize_country_service();
+    let country_service = initialize_country_service(whosonfirst_db.clone());
     let bootstrap_nodes = cli.get_bootstrap_nodes(config.bootstrap_nodes.clone());
     let nat = cli.get_nat(config.nat.clone());
     let listen_addrs = cli.get_listen_addrs(config.listen_addrs.clone());
@@ -88,89 +84,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !locality_ids.is_empty() {
         info!("Processing {} specific locality IDs", locality_ids.len());
     } else {
-        let countries = country_service.get_countries_to_process(&config.target_countries);
+        let countries = country_service.get_countries_to_process(&config.target_countries).await?;
         info!("Processing {} countries", countries.len());
     }
 
-    info!("Starting storage node...");
-    storage_service.start_node().await?;
-    info!("Storage node started successfully");
+    let runner = NodeRunner::new(
+        config.clone(),
+        storage_service.clone(),
+        extraction_service,
+        upload_service,
+        country_service,
+        locality_ids,
+        cli.should_skip_extract(),
+    );
 
-    if !cli.should_skip_extract() {
-        info!("Step 1: Extracting PMTiles from planet file...");
-        if !locality_ids.is_empty() {
-            if let Err(e) = extraction_service.extract_localities_by_ids(&locality_ids).await {
-                error!("Failed to extract PMTiles: {}", e);
-                warn!("Continuing with existing PMTiles if available...");
-            }
-        } else {
-            let countries = country_service.get_countries_to_process(&config.target_countries);
-            if let Err(e) = extract_pmtiles(&extraction_service, &countries, &whosonfirst_db).await {
-                error!("Failed to extract PMTiles: {}", e);
-                warn!("Continuing with existing PMTiles if available...");
-            }
-        }
-    } else {
-        info!("Step 1: Skipping PMTiles extraction (--no-extract flag set)");
-    }
-
-    info!("Step 2: Uploading localities to storage...");
-    if let Err(e) = upload_localities(&upload_service).await {
-        error!("Failed to upload localities: {}", e);
+    if let Err(e) = runner.run().await {
+        error!("Application error: {}", e);
         return Err(e.into());
-    }
-
-    let stats = upload_service.get_stats().await;
-    print_final_stats(&stats);
-
-    // Get node info and display
-    match storage_service.get_node_info().await {
-        Ok(node_info) => {
-            info!("Storage node is now running and serving files to the network...");
-            if let Some(peer_id) = node_info.peer_id {
-                info!("Peer ID: {}", peer_id);
-            }
-            if !node_info.addresses.is_empty() {
-                info!("Node Addresses:");
-                for addr in &node_info.addresses {
-                    info!("  {}", addr);
-                }
-            }
-            if !node_info.announce_addresses.is_empty() {
-                info!("Announce Addresses:");
-                for addr in &node_info.announce_addresses {
-                    info!("  {}", addr);
-                }
-            }
-            if let Some(spr) = node_info.spr {
-                info!("Signed Peer Record:\n  {}", spr);
-            }
-            info!("Discovery table nodes: {}", node_info.discovery_node_count);
-            if node_info.discovery_node_count > 0 {
-                info!("Successfully connected to the network via bootstrap nodes");
-            } else {
-                warn!("No peers in discovery table - bootstrap may have failed");
-            }
-            if let Some(version) = node_info.version {
-                info!("Storage version: {}", version);
-            }
-        }
-        Err(e) => {
-            info!("Storage node is now running and serving files to the network...");
-            warn!("Failed to get node info: {}", e);
-        }
     }
 
     info!("Press Ctrl+C to stop the node gracefully");
 
-    // Create progress bar for node status monitoring
-    let progress_bar = create_node_status_progress_bar();
-    let storage_service_clone = storage_service.clone();
-    let monitor_handle = tokio::spawn(async move {
-        monitor_node_status(storage_service_clone, progress_bar).await;
-    });
+    let monitor_handle = runner.start_monitoring();
 
-    // Keep the node running until interrupted
     tokio::select! {
         _ = async {
             signal::ctrl_c().await.expect("Failed to listen for ctrl+c");
@@ -186,90 +122,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Stop the monitor
     monitor_handle.abort();
 
-    // Stop the node gracefully
-    info!("Stopping storage node...");
-    storage_service.stop_node().await?;
-    info!("Storage node stopped successfully");
+    runner.shutdown().await?;
 
     info!("AnyNode shutdown complete");
     Ok(())
-}
-
-async fn extract_pmtiles(
-    extraction_service: &anynode::services::ExtractionService,
-    countries: &[String],
-    _whosonfirst_db: &Arc<anynode::services::DatabaseService>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    info!("Extracting PMTiles for {} countries", countries.len());
-
-    extraction_service.extract_localities(countries).await?;
-
-    info!("PMTiles extraction completed for all countries");
-    Ok(())
-}
-
-async fn upload_localities(
-    upload_service: &LocalityUploadService,
-) -> Result<(), Box<dyn std::error::Error>> {
-    info!("Starting locality upload process...");
-
-    upload_service.process_all_localities().await?;
-
-    info!("Locality upload process completed");
-    Ok(())
-}
-
-/// Create an infinite progress bar for node status monitoring
-fn create_node_status_progress_bar() -> ProgressBar {
-    let pb = ProgressBar::new_spinner();
-    pb.set_style(
-        ProgressStyle::with_template("{spinner:.green} {msg}")
-            .unwrap()
-            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
-    );
-    pb.enable_steady_tick(Duration::from_millis(100));
-    pb
-}
-
-/// Monitor and display node status with discovery peer count
-async fn monitor_node_status(
-    storage_service: Arc<anynode::services::StorageService>,
-    progress_bar: ProgressBar,
-) {
-    let mut tick = interval(Duration::from_secs(2));
-
-    loop {
-        tick.tick().await;
-
-        let status = storage_service.get_status().await;
-
-        // Try to get node info for discovery count
-        match storage_service.get_node_info().await {
-            Ok(node_info) => {
-                let status_str = format_status(&status);
-                progress_bar.set_message(format!(
-                    "Status: {} | Discovery: {} nodes",
-                    status_str, node_info.discovery_node_count
-                ));
-            }
-            Err(_) => {
-                let status_str = format_status(&status);
-                progress_bar.set_message(format!("Status: {}", status_str));
-            }
-        }
-    }
-}
-
-/// Format storage status for display
-fn format_status(status: &StorageStatus) -> &'static str {
-    match status {
-        StorageStatus::Disconnected => "Disconnected",
-        StorageStatus::Initialized => "Initialized",
-        StorageStatus::Connecting => "Connecting",
-        StorageStatus::Connected => "Connected",
-        StorageStatus::Error => "Error",
-    }
 }
