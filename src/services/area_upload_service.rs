@@ -7,7 +7,7 @@ use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
 #[derive(Error, Debug)]
-pub enum LocalityUploadError {
+pub enum AreaUploadError {
     #[error("Database error: {0}")]
     DatabaseError(#[from] crate::services::DatabaseError),
     #[error("Storage error: {0}")]
@@ -18,21 +18,21 @@ pub enum LocalityUploadError {
     QueueError(String),
 }
 
-pub struct LocalityUploadService {
+pub struct AreaUploadService {
     cid_db: Arc<DatabaseService>,
     whosonfirst_db: Arc<DatabaseService>,
     storage: Arc<StorageService>,
     upload_queue: Arc<Mutex<UploadQueue>>,
     stats: Arc<Mutex<UploadStats>>,
-    localities_dir: std::path::PathBuf,
+    areas_dir: std::path::PathBuf,
 }
 
-impl LocalityUploadService {
+impl AreaUploadService {
     pub fn new(
         cid_db: Arc<DatabaseService>,
         whosonfirst_db: Arc<DatabaseService>,
         storage: Arc<StorageService>,
-        localities_dir: std::path::PathBuf,
+        areas_dir: std::path::PathBuf,
     ) -> Self {
         Self {
             cid_db,
@@ -40,22 +40,22 @@ impl LocalityUploadService {
             storage,
             upload_queue: Arc::new(Mutex::new(UploadQueue::new(10, 100))),
             stats: Arc::new(Mutex::new(UploadStats::new())),
-            localities_dir,
+            areas_dir,
         }
     }
 
-    pub async fn process_all_localities(&self) -> Result<(), LocalityUploadError> {
-        info!("Starting to process all localities by scanning filesystem for PMTiles files");
+    pub async fn process_all_areas(&self) -> Result<(), AreaUploadError> {
+        info!("Starting to process all areas by scanning filesystem for PMTiles files");
 
-        if !self.localities_dir.exists() {
-            warn!("Localities directory not found: {:?}", self.localities_dir);
+        if !self.areas_dir.exists() {
+            warn!("Areas directory not found: {:?}", self.areas_dir);
             return Ok(());
         }
 
         let mut total_files = 0;
         let mut processed_files = 0;
 
-        for country_dir_entry in std::fs::read_dir(&self.localities_dir)? {
+        for country_dir_entry in std::fs::read_dir(&self.areas_dir)? {
             let country_dir = country_dir_entry?;
             let country_path = country_dir.path();
 
@@ -67,7 +67,7 @@ impl LocalityUploadService {
                 .file_name()
                 .and_then(|name| name.to_str())
                 .ok_or_else(|| {
-                    LocalityUploadError::QueueError("Invalid country directory name".to_string())
+                    AreaUploadError::QueueError("Invalid country directory name".to_string())
                 })?;
 
             info!("Scanning country directory: {}", country_code);
@@ -97,7 +97,7 @@ impl LocalityUploadService {
         &self,
         country_path: &std::path::Path,
         country_code: &str,
-    ) -> Result<(usize, usize), LocalityUploadError> {
+    ) -> Result<(usize, usize), AreaUploadError> {
         let mut total_files = 0;
         let mut processed_files = 0;
 
@@ -114,20 +114,20 @@ impl LocalityUploadService {
             let filename = file_path
                 .file_stem()
                 .and_then(|name| name.to_str())
-                .ok_or_else(|| LocalityUploadError::QueueError("Invalid filename".to_string()))?;
+                .ok_or_else(|| AreaUploadError::QueueError("Invalid filename".to_string()))?;
 
-            let locality_id = filename.parse::<u32>().map_err(|_| {
-                LocalityUploadError::QueueError(format!("Invalid locality ID in filename: {}", filename))
+            let area_id = filename.parse::<u32>().map_err(|_| {
+                AreaUploadError::QueueError(format!("Invalid area ID in filename: {}", filename))
             })?;
 
             match self
                 .whosonfirst_db
-                .get_locality_by_id(locality_id as i64)
+                .get_area_by_id(area_id as i64)
                 .await
             {
-                Ok(Some(_locality)) => {
+                Ok(Some(_area)) => {
                     if self
-                        .process_file_for_upload(&file_path, country_code, locality_id)
+                        .process_file_for_upload(&file_path, country_code, area_id)
                         .await?
                     {
                         processed_files += 1;
@@ -135,12 +135,12 @@ impl LocalityUploadService {
                 }
                 Ok(None) => {
                     warn!(
-                        "Locality ID {} found in filesystem but not in database, skipping",
-                        locality_id
+                        "Area ID {} found in filesystem but not in database, skipping",
+                        area_id
                     );
                 }
                 Err(e) => {
-                    error!("Database error checking locality {}: {}", locality_id, e);
+                    error!("Database error checking area {}: {}", area_id, e);
                 }
             }
         }
@@ -156,16 +156,16 @@ impl LocalityUploadService {
         &self,
         file_path: &std::path::Path,
         country_code: &str,
-        locality_id: u32,
-    ) -> Result<bool, LocalityUploadError> {
-        if self.cid_db.has_cid_mapping(country_code, locality_id).await? {
-            info!("Locality {} already uploaded, skipping", locality_id);
+        area_id: u32,
+    ) -> Result<bool, AreaUploadError> {
+        if self.cid_db.has_cid_mapping(country_code, area_id).await? {
+            info!("Area {} already uploaded, skipping", area_id);
             return Ok(false);
         }
 
         let pending_upload = PendingUpload::new(
             country_code.to_string(),
-            locality_id,
+            area_id,
             file_path.to_path_buf(),
         );
 
@@ -184,7 +184,7 @@ impl LocalityUploadService {
         Ok(true)
     }
 
-    async fn process_upload_queue(&self) -> Result<(), LocalityUploadError> {
+    async fn process_upload_queue(&self) -> Result<(), AreaUploadError> {
         let batch = {
             let mut queue = self.upload_queue.lock().await;
             queue.take_batch()
@@ -219,7 +219,6 @@ impl LocalityUploadService {
         if !successful_uploads.is_empty() {
             self.batch_update_cid_mappings(&successful_uploads).await?;
 
-            // Update stats
             let mut stats = self.stats.lock().await;
             for upload in &successful_uploads {
                 stats.increment_uploaded(upload.file_size);
@@ -245,11 +244,11 @@ impl LocalityUploadService {
     async fn upload_single_file(
         &self,
         pending: PendingUpload,
-    ) -> Result<CompletedUpload, LocalityUploadError> {
+    ) -> Result<CompletedUpload, AreaUploadError> {
         let file_path = &pending.file_path;
 
         if !file_path.exists() {
-            return Err(LocalityUploadError::FileError(std::io::Error::new(
+            return Err(AreaUploadError::FileError(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 format!("File not found: {:?}", file_path),
             )));
@@ -258,25 +257,25 @@ impl LocalityUploadService {
         let file_size = tokio::fs::metadata(file_path).await?.len();
 
         info!(
-            "Uploading locality {} from country {} ({} bytes)",
-            pending.locality_id, pending.country_code, file_size
+            "Uploading area {} from country {} ({} bytes)",
+            pending.area_id, pending.country_code, file_size
         );
 
         let result = self.storage.upload_file(file_path).await.map_err(|e| {
-            error!("Upload failed for locality {}: {}", pending.locality_id, e);
+            error!("Upload failed for area {}: {}", pending.area_id, e);
             e
         })?;
 
         let completed_upload = CompletedUpload::new(
             pending.country_code.clone(),
-            pending.locality_id,
+            pending.area_id,
             result.cid.clone(),
             file_size,
         );
 
         info!(
-            "Successfully uploaded locality {} with CID: {}",
-            pending.locality_id, result.cid
+            "Successfully uploaded area {} with CID: {}",
+            pending.area_id, result.cid
         );
 
         Ok(completed_upload)
@@ -285,13 +284,13 @@ impl LocalityUploadService {
     async fn batch_update_cid_mappings(
         &self,
         uploads: &[CompletedUpload],
-    ) -> Result<(), LocalityUploadError> {
+    ) -> Result<(), AreaUploadError> {
         let mappings: Vec<_> = uploads
             .iter()
             .map(|upload| {
                 (
                     upload.country_code.clone(),
-                    upload.locality_id,
+                    upload.area_id,
                     upload.cid.clone(),
                     upload.file_size,
                 )

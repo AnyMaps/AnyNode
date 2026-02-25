@@ -21,44 +21,35 @@ impl std::error::Error for ConfigError {}
 
 #[derive(Clone, Debug)]
 pub struct Config {
-    // Storage configuration
     pub storage_data_dir: PathBuf,
     pub storage_quota: u64,
     pub discovery_port: u16,
     pub max_peers: u32,
-    pub bootstrap_nodes: Vec<String>,
+    pub bootstrap_nodes: Vec<String>, // TODO: Add a type for SPR URIs, with proper parsing
 
-    // Network discoverability configuration
-    pub nat: String,
-    pub listen_addrs: Vec<String>,
+    pub nat: String, // TODO: properly type this
+    pub listen_addrs: Vec<String>, // TODO: Add a type for those URIs as well, with proper parsing
 
-    // Database paths
     pub whosonfirst_db_path: PathBuf,
     pub cid_db_path: PathBuf,
 
-    // Directories
-    pub localities_dir: PathBuf,
+    pub areas_dir: PathBuf,
 
-    // Tool commands
     pub bzip2_cmd: String,
     pub pmtiles_cmd: String,
 
-    // Processing options
     pub target_countries: Vec<String>,
-    pub locality_ids: Vec<u32>,
+    pub area_ids: Vec<u32>,
     pub max_concurrent_extractions: usize,
-    pub planet_pmtiles_location: Option<String>,
+    pub planet_pmtiles_location: Option<String>, // TODO: Need validation on this (can either be a path or url)
 
-    // URLs
-    pub whosonfirst_db_url: String,
+    pub whosonfirst_db_url: String, // TODO: Need validation on this
 }
 
 impl Config {
     pub fn from_env() -> Result<Self, ConfigError> {
-        // Load .env file if present
         dotenv().ok();
 
-        // Storage configuration (all required)
         let storage_data_dir = PathBuf::from(
             env::var("STORAGE_DATA_DIR")
                 .map_err(|_| ConfigError::MissingEnvVar("STORAGE_DATA_DIR".to_string()))?,
@@ -80,7 +71,6 @@ impl Config {
             .parse()
             .map_err(|e| ConfigError::InvalidValue(format!("STORAGE_MAX_PEERS: {}", e)))?;
 
-        // Database paths (all required)
         let whosonfirst_db_path = PathBuf::from(
             env::var("WHOSONFIRST_DB_PATH")
                 .map_err(|_| ConfigError::MissingEnvVar("WHOSONFIRST_DB_PATH".to_string()))?,
@@ -91,20 +81,17 @@ impl Config {
                 .map_err(|_| ConfigError::MissingEnvVar("CID_DB_PATH".to_string()))?,
         );
 
-        // Directories (all required)
-        let localities_dir = PathBuf::from(
-            env::var("LOCALITIES_DIR")
-                .map_err(|_| ConfigError::MissingEnvVar("LOCALITIES_DIR".to_string()))?,
+        let areas_dir = PathBuf::from(
+            env::var("AREAS_DIR")
+                .map_err(|_| ConfigError::MissingEnvVar("AREAS_DIR".to_string()))?,
         );
 
-        // Tool commands (required)
         let bzip2_cmd = env::var("BZIP2_CMD")
             .map_err(|_| ConfigError::MissingEnvVar("BZIP2_CMD".to_string()))?;
 
         let pmtiles_cmd = env::var("PMTILES_CMD")
             .map_err(|_| ConfigError::MissingEnvVar("PMTILES_CMD".to_string()))?;
 
-        // Processing options
         let target_countries: Vec<String> = env::var("TARGET_COUNTRIES")
             .map_err(|_| ConfigError::MissingEnvVar("TARGET_COUNTRIES".to_string()))?
             .split(',')
@@ -112,8 +99,8 @@ impl Config {
             .filter(|s| !s.is_empty())
             .collect();
 
-        // Optional - comma-separated locality IDs to process (overrides TARGET_COUNTRIES)
-        let locality_ids: Vec<u32> = env::var("LOCALITY_IDS")
+        // Optional - comma-separated area IDs to process (overrides TARGET_COUNTRIES)
+        let area_ids: Vec<u32> = env::var("AREA_IDS")
             .ok()
             .filter(|s| !s.is_empty())
             .map(|s| {
@@ -143,7 +130,6 @@ impl Config {
             .map(|s| s.split(',').map(|s| s.trim().to_string()).collect())
             .unwrap_or_default();
 
-        // Network discoverability (all required)
         let nat = env::var("STORAGE_NAT")
             .map_err(|_| ConfigError::MissingEnvVar("STORAGE_NAT".to_string()))?;
 
@@ -154,7 +140,6 @@ impl Config {
             .filter(|s| !s.is_empty())
             .collect();
 
-        // URLs (required)
         let whosonfirst_db_url = env::var("WHOSONFIRST_DB_URL")
             .map_err(|_| ConfigError::MissingEnvVar("WHOSONFIRST_DB_URL".to_string()))?;
 
@@ -168,11 +153,11 @@ impl Config {
             listen_addrs,
             whosonfirst_db_path,
             cid_db_path,
-            localities_dir,
+            areas_dir,
             bzip2_cmd,
             pmtiles_cmd,
             target_countries,
-            locality_ids,
+            area_ids,
             max_concurrent_extractions,
             planet_pmtiles_location,
             whosonfirst_db_url,

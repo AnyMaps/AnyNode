@@ -1,9 +1,9 @@
 use rusqlite::Row;
 use serde::{Deserialize, Serialize};
 
-/// Locality data from WhosOnFirst database
+/// Administrative area data from WhosOnFirst database (regions and counties)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Locality {
+pub struct AdministrativeArea {
     pub id: i64,
     pub name: String,
     pub country: String,
@@ -16,8 +16,7 @@ pub struct Locality {
     pub max_latitude: f64,
 }
 
-impl Locality {
-    /// Create a Locality from a SQLite row
+impl AdministrativeArea {
     pub fn from_row(row: &Row) -> Result<Self, rusqlite::Error> {
         Ok(Self {
             id: row.get(0)?,
@@ -34,19 +33,18 @@ impl Locality {
     }
 }
 
-/// Extended locality information including storage metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LocalityInfo {
+pub struct AreaInfo {
     #[serde(flatten)]
-    pub locality: Locality,
+    pub area: AdministrativeArea,
     pub file_size: u64,
     pub cid: String,
 }
 
-impl LocalityInfo {
-    pub fn new(locality: Locality, file_size: u64, cid: String) -> Self {
+impl AreaInfo {
+    pub fn new(area: AdministrativeArea, file_size: u64, cid: String) -> Self {
         Self {
-            locality,
+            area,
             file_size,
             cid,
         }
@@ -54,8 +52,8 @@ impl LocalityInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PaginatedLocalitiesResult {
-    pub localities: Vec<LocalityInfo>,
+pub struct PaginatedAreasResult {
+    pub areas: Vec<AreaInfo>,
     pub pagination: PaginationInfo,
 }
 

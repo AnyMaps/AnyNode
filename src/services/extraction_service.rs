@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::services::DatabaseService;
-use crate::types::Locality;
+use crate::types::AdministrativeArea;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -14,7 +14,7 @@ pub enum ExtractionError {
     PlanetLocationNotConfigured,
     #[error("Planet PMTiles file not found: {0}")]
     PlanetFileNotFound(String),
-    #[error("Extraction failed for locality {0}: {1}")]
+    #[error("Extraction failed for area {0}: {1}")]
     ExtractionFailed(i64, String),
     #[error("Database error: {0}")]
     DatabaseError(String),
@@ -73,13 +73,13 @@ impl ExtractionService {
         }
     }
 
-    pub async fn extract_locality(
+    pub async fn extract_area(
         &self,
-        locality: &Locality,
+        area: &AdministrativeArea,
         planet_source: &PlanetSource,
         country_dir: &Path,
     ) -> Result<(), ExtractionError> {
-        let output_path = country_dir.join(format!("{}.pmtiles", locality.id));
+        let output_path = country_dir.join(format!("{}.pmtiles", area.id));
 
         if output_path.exists() {
             info!("Skipping existing file: {}", output_path.display());
@@ -88,15 +88,15 @@ impl ExtractionService {
 
         let bbox = format!(
             "{},{},{},{}",
-            locality.min_longitude,
-            locality.min_latitude,
-            locality.max_longitude,
-            locality.max_latitude
+            area.min_longitude,
+            area.min_latitude,
+            area.max_longitude,
+            area.max_latitude
         );
 
         info!(
-            "Extracting locality {} ({}) with bbox: {}",
-            locality.id, locality.name, bbox
+            "Extracting {} {} ({}) with bbox: {}",
+            area.placetype, area.id, area.name, bbox
         );
 
         let output = tokio::process::Command::new(&self.config.pmtiles_cmd)
@@ -108,13 +108,13 @@ impl ExtractionService {
             ])
             .output()
             .await
-            .map_err(|e| ExtractionError::ExtractionFailed(locality.id, e.to_string()))?;
+            .map_err(|e| ExtractionError::ExtractionFailed(area.id, e.to_string()))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            error!("Extraction failed for locality {}: {}", locality.id, stderr);
+            error!("Extraction failed for {} {}: {}", area.placetype, area.id, stderr);
             return Err(ExtractionError::ExtractionFailed(
-                locality.id,
+                area.id,
                 stderr.to_string(),
             ));
         }
@@ -125,13 +125,13 @@ impl ExtractionService {
         } else {
             error!("Failed to create file: {}", output_path.display());
             Err(ExtractionError::ExtractionFailed(
-                locality.id,
+                area.id,
                 "Output file not created".to_string(),
             ))
         }
     }
 
-    pub async fn extract_localities(
+    pub async fn extract_areas(
         &self,
         country_codes: &[String],
     ) -> Result<(), ExtractionError> {
@@ -140,49 +140,49 @@ impl ExtractionService {
         for country_code in country_codes {
             info!("Processing country: {}", country_code);
 
-            let country_dir = self.config.localities_dir.join(country_code);
+            let country_dir = self.config.areas_dir.join(country_code);
             if !country_dir.exists() {
                 std::fs::create_dir_all(&country_dir)?;
             }
 
-            let localities = self
+            let areas = self
                 .db_service
-                .get_country_localities(country_code)
+                .get_country_areas(country_code)
                 .await
                 .map_err(|e| ExtractionError::DatabaseError(e.to_string()))?;
 
-            if localities.is_empty() {
-                info!("No localities found for country: {}", country_code);
+            if areas.is_empty() {
+                info!("No areas found for country: {}", country_code);
                 continue;
             }
 
             info!(
-                "Found {} localities for country: {}",
-                localities.len(),
+                "Found {} areas for country: {}",
+                areas.len(),
                 country_code
             );
 
             let mut existing_count = 0;
-            for locality in &localities {
-                let output_path = country_dir.join(format!("{}.pmtiles", locality.id));
+            for area in &areas {
+                let output_path = country_dir.join(format!("{}.pmtiles", area.id));
                 if output_path.exists() {
                     existing_count += 1;
                 }
             }
 
-            let total_count = localities.len();
+            let total_count = areas.len();
             let remaining_count = total_count - existing_count;
 
             if remaining_count == 0 {
                 info!(
-                    "All {} localities already exist for country: {}",
+                    "All {} areas already exist for country: {}",
                     total_count, country_code
                 );
                 continue;
             }
 
             info!(
-                "Progress: {}/{} localities already exist, {} remaining to extract",
+                "Progress: {}/{} areas already exist, {} remaining to extract",
                 existing_count, total_count, remaining_count
             );
 
@@ -190,7 +190,7 @@ impl ExtractionService {
             let mut tasks = Vec::new();
             let completed_count = Arc::new(std::sync::atomic::AtomicUsize::new(existing_count));
 
-            for locality in localities {
+            for area in areas {
                 let planet_source = planet_source.clone();
                 let country_dir = country_dir.clone();
                 let semaphore = semaphore.clone();
@@ -200,17 +200,17 @@ impl ExtractionService {
                 let task = tokio::spawn(async move {
                     let _permit = semaphore.acquire().await.unwrap();
                     let result = extraction_service
-                        .extract_locality(&locality, &planet_source, &country_dir)
+                        .extract_area(&area, &planet_source, &country_dir)
                         .await;
 
                     if result.is_ok() {
                         let current =
                             completed_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                         info!(
-                            "Progress: {}/{} localities extracted for {}",
+                            "Progress: {}/{} areas extracted for {}",
                             current + 1,
                             total_count,
-                            locality.country
+                            area.country
                         );
                     }
 
@@ -248,58 +248,58 @@ impl ExtractionService {
         Ok(())
     }
 
-    pub async fn extract_localities_by_ids(
+    pub async fn extract_areas_by_ids(
         &self,
-        locality_ids: &[u32],
+        area_ids: &[u32],
     ) -> Result<(), ExtractionError> {
         let planet_source = self.get_planet_source()?;
 
-        let localities = self
+        let areas = self
             .db_service
-            .get_localities_by_ids(locality_ids)
+            .get_areas_by_ids(area_ids)
             .await
             .map_err(|e| ExtractionError::DatabaseError(e.to_string()))?;
 
-        if localities.is_empty() {
-            info!("No valid localities found for provided IDs");
+        if areas.is_empty() {
+            info!("No valid areas found for provided IDs");
             return Ok(());
         }
 
         info!(
-            "Found {} localities for {} provided IDs",
-            localities.len(),
-            locality_ids.len()
+            "Found {} areas for {} provided IDs",
+            areas.len(),
+            area_ids.len()
         );
 
         let found_ids: std::collections::HashSet<i64> =
-            localities.iter().map(|l| l.id).collect();
-        for id in locality_ids {
+            areas.iter().map(|a| a.id).collect();
+        for id in area_ids {
             if !found_ids.contains(&(*id as i64)) {
                 warn!(
-                    "Locality ID {} not found in database or not a valid locality",
+                    "Area ID {} not found in database or not a valid region/county",
                     id
                 );
             }
         }
 
-        let mut by_country: HashMap<String, Vec<Locality>> = HashMap::new();
-        for locality in localities {
+        let mut by_country: HashMap<String, Vec<AdministrativeArea>> = HashMap::new();
+        for area in areas {
             by_country
-                .entry(locality.country.clone())
+                .entry(area.country.clone())
                 .or_insert_with(Vec::new)
-                .push(locality);
+                .push(area);
         }
 
         let semaphore = Arc::new(Semaphore::new(self.config.max_concurrent_extractions));
         let mut tasks = Vec::new();
 
-        for (country_code, country_localities) in by_country {
-            let country_dir = self.config.localities_dir.join(&country_code);
+        for (country_code, country_areas) in by_country {
+            let country_dir = self.config.areas_dir.join(&country_code);
             if !country_dir.exists() {
                 std::fs::create_dir_all(&country_dir)?;
             }
 
-            for locality in country_localities {
+            for area in country_areas {
                 let planet_source = planet_source.clone();
                 let country_dir = country_dir.clone();
                 let semaphore = semaphore.clone();
@@ -308,7 +308,7 @@ impl ExtractionService {
                 let task = tokio::spawn(async move {
                     let _permit = semaphore.acquire().await.unwrap();
                     extraction_service
-                        .extract_locality(&locality, &planet_source, &country_dir)
+                        .extract_area(&area, &planet_source, &country_dir)
                         .await
                 });
 
@@ -344,7 +344,7 @@ impl ExtractionService {
     }
 
     pub async fn get_pmtiles_file_count(&self, country_code: &str) -> Result<u32, ExtractionError> {
-        let country_dir = self.config.localities_dir.join(country_code);
+        let country_dir = self.config.areas_dir.join(country_code);
 
         if !country_dir.exists() {
             return Ok(0);

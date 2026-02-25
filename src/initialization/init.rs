@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::services::{
-    CountryService, DatabaseService, ExtractionService, LocalityUploadService, StorageService,
+    AreaUploadService, CountryService, DatabaseService, ExtractionService, StorageService,
 };
 use crate::types::UploadStats;
 use std::path::PathBuf;
@@ -65,22 +65,22 @@ pub fn initialize_extraction_service(
     Ok(extraction_service)
 }
 
-pub fn initialize_locality_upload_service(
+pub fn initialize_area_upload_service(
     cid_db: Arc<DatabaseService>,
     whosonfirst_db: Arc<DatabaseService>,
     storage: Arc<StorageService>,
     config: &Config,
-) -> super::InitializationResult<LocalityUploadService> {
-    info!("Initializing locality upload service");
+) -> super::InitializationResult<AreaUploadService> {
+    info!("Initializing area upload service");
 
-    let upload_service = LocalityUploadService::new(
+    let upload_service = AreaUploadService::new(
         cid_db,
         whosonfirst_db,
         storage,
-        config.localities_dir.clone(),
+        config.areas_dir.clone(),
     );
 
-    info!("Locality upload service initialized successfully");
+    info!("Area upload service initialized successfully");
     Ok(upload_service)
 }
 
@@ -88,7 +88,7 @@ pub fn print_startup_info(config: &Config, cli: &crate::cli::Cli) {
     info!("=== AnyNode Starting ===");
     info!("WhosOnFirst DB: {:?}", config.whosonfirst_db_path);
     info!("CID Mappings DB: {:?}", config.cid_db_path);
-    info!("Localities Dir: {:?}", config.localities_dir);
+    info!("Areas Dir: {:?}", config.areas_dir);
     info!("Planet PMTiles: {:?}", config.planet_pmtiles_location);
     info!("Storage Port: {}", config.discovery_port);
     info!("Storage Data Dir: {:?}", config.storage_data_dir);

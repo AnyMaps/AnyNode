@@ -2,7 +2,7 @@ use crate::app::monitor::{create_node_status_progress_bar, monitor_node_status};
 use crate::config::Config;
 use crate::initialization::print_final_stats;
 use crate::services::{
-    CountryService, ExtractionService, LocalityUploadService, StorageService,
+    AreaUploadService, CountryService, ExtractionService, StorageService,
 };
 use std::sync::Arc;
 use tracing::{error, info, warn};
@@ -13,9 +13,9 @@ pub struct NodeRunner {
     config: Arc<Config>,
     storage_service: Arc<StorageService>,
     extraction_service: ExtractionService,
-    upload_service: LocalityUploadService,
+    upload_service: AreaUploadService,
     country_service: CountryService,
-    locality_ids: Vec<u32>,
+    area_ids: Vec<u32>,
     skip_extract: bool,
 }
 
@@ -24,9 +24,9 @@ impl NodeRunner {
         config: Arc<Config>,
         storage_service: Arc<StorageService>,
         extraction_service: ExtractionService,
-        upload_service: LocalityUploadService,
+        upload_service: AreaUploadService,
         country_service: CountryService,
-        locality_ids: Vec<u32>,
+        area_ids: Vec<u32>,
         skip_extract: bool,
     ) -> Self {
         Self {
@@ -35,7 +35,7 @@ impl NodeRunner {
             extraction_service,
             upload_service,
             country_service,
-            locality_ids,
+            area_ids,
             skip_extract,
         }
     }
@@ -47,11 +47,11 @@ impl NodeRunner {
 
         if !self.skip_extract {
             info!("Extracting PMTiles from planet file...");
-            if !self.locality_ids.is_empty() {
-                info!("Processing {} specific locality IDs", self.locality_ids.len());
+            if !self.area_ids.is_empty() {
+                info!("Processing {} specific area IDs", self.area_ids.len());
                 if let Err(e) = self
                     .extraction_service
-                    .extract_localities_by_ids(&self.locality_ids)
+                    .extract_areas_by_ids(&self.area_ids)
                     .await
                 {
                     error!("Failed to extract PMTiles: {}", e);
@@ -63,7 +63,7 @@ impl NodeRunner {
                     .get_countries_to_process(&self.config.target_countries)
                     .await?;
                 info!("Processing {} countries", countries.len());
-                if let Err(e) = self.extraction_service.extract_localities(&countries).await {
+                if let Err(e) = self.extraction_service.extract_areas(&countries).await {
                     error!("Failed to extract PMTiles: {}", e);
                     warn!("Continuing with existing PMTiles if available...");
                 }
@@ -72,8 +72,8 @@ impl NodeRunner {
             info!("Skipping PMTiles extraction (--no-extract flag set)");
         }
 
-        info!("Uploading localities to storage...");
-        self.upload_service.process_all_localities().await?;
+        info!("Uploading areas to storage...");
+        self.upload_service.process_all_areas().await?;
 
         let stats = self.upload_service.get_stats().await;
         print_final_stats(&stats);

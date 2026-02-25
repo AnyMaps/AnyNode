@@ -35,7 +35,7 @@ pub use database_init::{initialize_cid_db, initialize_whosonfirst_db};
 pub use directories_init::ensure_directories;
 pub use download_init::ensure_database_is_present;
 pub use init::{
-    initialize_country_service, initialize_extraction_service, initialize_locality_upload_service,
+    initialize_country_service, initialize_extraction_service, initialize_area_upload_service,
     initialize_storage_service, print_final_stats, print_startup_info,
 };
 pub use tools_init::ensure_required_tools;

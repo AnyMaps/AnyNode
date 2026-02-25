@@ -67,9 +67,9 @@ pub struct Cli {
     #[arg(
         long,
         value_name = "IDS",
-        help = "Comma-separated locality IDs to extract (overrides LOCALITY_IDS and TARGET_COUNTRIES env vars)"
+        help = "Comma-separated area IDs to extract (overrides AREA_IDS and TARGET_COUNTRIES env vars)"
     )]
-    pub locality_ids: Option<String>,
+    pub area_ids: Option<String>,
 }
 
 impl Cli {
@@ -131,8 +131,8 @@ impl Cli {
         }
     }
 
-    pub fn get_locality_ids(&self, env_ids: Vec<u32>) -> Vec<u32> {
-        if let Some(ids) = &self.locality_ids {
+    pub fn get_area_ids(&self, env_ids: Vec<u32>) -> Vec<u32> {
+        if let Some(ids) = &self.area_ids {
             ids.split(',')
                 .map(|s| s.trim())
                 .filter(|s| !s.is_empty())

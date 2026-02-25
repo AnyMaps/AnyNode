@@ -10,7 +10,7 @@ pub enum ApplicationError {
     #[error("Extraction error: {0}")]
     ExtractionError(#[from] crate::services::ExtractionError),
     #[error("Upload error: {0}")]
-    UploadError(#[from] crate::services::LocalityUploadError),
+    UploadError(#[from] crate::services::AreaUploadError),
     #[error("Storage error: {0}")]
     StorageError(#[from] crate::services::StorageError),
     #[error("IO error: {0}")]

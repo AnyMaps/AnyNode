@@ -1,4 +1,4 @@
-use crate::types::Locality;
+use crate::types::AdministrativeArea;
 use rusqlite::Connection;
 use std::sync::Arc;
 use thiserror::Error;
@@ -40,19 +40,19 @@ impl DatabaseService {
             let conn = conn.blocking_lock();
 
             let create_cid_table = r#"
-            CREATE TABLE IF NOT EXISTS locality_cids (
+            CREATE TABLE IF NOT EXISTS area_cids (
                 country_code TEXT NOT NULL,
-                locality_id INTEGER NOT NULL,
+                area_id INTEGER NOT NULL,
                 cid TEXT NOT NULL,
                 upload_time DATETIME DEFAULT CURRENT_TIMESTAMP,
                 file_size INTEGER,
-                PRIMARY KEY (country_code, locality_id)
+                PRIMARY KEY (country_code, area_id)
             )
             "#;
 
             let create_cid_index = r#"
-            CREATE INDEX IF NOT EXISTS idx_locality_cids_lookup
-            ON locality_cids(country_code, locality_id)
+            CREATE INDEX IF NOT EXISTS idx_area_cids_lookup
+            ON area_cids(country_code, area_id)
             "#;
 
             conn.execute(create_cid_table, [])?;
@@ -63,10 +63,10 @@ impl DatabaseService {
         .await?
     }
 
-    pub async fn get_country_localities(
+    pub async fn get_country_areas(
         &self,
         country_code: &str,
-    ) -> Result<Vec<Locality>, DatabaseError> {
+    ) -> Result<Vec<AdministrativeArea>, DatabaseError> {
         let conn = self.conn.clone();
         let country_code = country_code.to_string();
 
@@ -74,7 +74,7 @@ impl DatabaseService {
             let conn = conn.blocking_lock();
 
             let conditions = [
-                "placetype = 'locality'",
+                "placetype IN ('region', 'county')",
                 "is_current = 1",
                 "is_deprecated = 0",
                 "name IS NOT NULL",
@@ -95,15 +95,15 @@ impl DatabaseService {
             );
 
             let mut stmt = conn.prepare(&query_str)?;
-            let rows = stmt.query_map([&country_code], |row| Locality::from_row(row))?;
+            let rows = stmt.query_map([&country_code], |row| AdministrativeArea::from_row(row))?;
 
-            let localities = rows.collect::<Result<Vec<_>, _>>()?;
-            Ok(localities)
+            let areas = rows.collect::<Result<Vec<_>, _>>()?;
+            Ok(areas)
         })
         .await?
     }
 
-    pub async fn get_country_locality_count(
+    pub async fn get_country_area_count(
         &self,
         country_code: &str,
     ) -> Result<u32, DatabaseError> {
@@ -114,7 +114,7 @@ impl DatabaseService {
             let conn = conn.blocking_lock();
 
             let conditions = [
-                "placetype = 'locality'",
+                "placetype IN ('region', 'county')",
                 "is_current = 1",
                 "is_deprecated = 0",
                 "country = ?1",
@@ -129,10 +129,10 @@ impl DatabaseService {
         .await?
     }
 
-    pub async fn get_locality_by_id(
+    pub async fn get_area_by_id(
         &self,
-        locality_id: i64,
-    ) -> Result<Option<Locality>, DatabaseError> {
+        area_id: i64,
+    ) -> Result<Option<AdministrativeArea>, DatabaseError> {
         let conn = self.conn.clone();
 
         tokio::task::spawn_blocking(move || {
@@ -141,51 +141,51 @@ impl DatabaseService {
             let query = r#"
             SELECT id, name, country, placetype, latitude, longitude, min_longitude, min_latitude, max_longitude, max_latitude
             FROM spr
-            WHERE id = ?1 AND placetype = 'locality' AND is_current = 1 AND is_deprecated = 0
+            WHERE id = ?1 AND placetype IN ('region', 'county') AND is_current = 1 AND is_deprecated = 0
             "#;
 
             let mut stmt = conn.prepare(query)?;
-            let rows = stmt.query_map([&locality_id], |row| Locality::from_row(row))?;
+            let rows = stmt.query_map([&area_id], |row| AdministrativeArea::from_row(row))?;
 
-            let localities: Result<Vec<_>, _> = rows.collect();
-            match localities {
-                Ok(locality_vec) => Ok(locality_vec.into_iter().next()),
+            let areas: Result<Vec<_>, _> = rows.collect();
+            match areas {
+                Ok(area_vec) => Ok(area_vec.into_iter().next()),
                 Err(e) => Err(DatabaseError::RusqliteError(e)),
             }
         })
         .await?
     }
 
-    pub async fn get_localities_by_ids(
+    pub async fn get_areas_by_ids(
         &self,
-        locality_ids: &[u32],
-    ) -> Result<Vec<Locality>, DatabaseError> {
-        if locality_ids.is_empty() {
+        area_ids: &[u32],
+    ) -> Result<Vec<AdministrativeArea>, DatabaseError> {
+        if area_ids.is_empty() {
             return Ok(Vec::new());
         }
 
         let conn = self.conn.clone();
-        let locality_ids: Vec<i64> = locality_ids.iter().map(|&id| id as i64).collect();
+        let area_ids: Vec<i64> = area_ids.iter().map(|&id| id as i64).collect();
 
         tokio::task::spawn_blocking(move || {
             let conn = conn.blocking_lock();
 
-            let placeholders: Vec<String> = locality_ids.iter().map(|_| "?".to_string()).collect();
+            let placeholders: Vec<String> = area_ids.iter().map(|_| "?".to_string()).collect();
             let placeholder_str = placeholders.join(",");
 
             let query_str = format!(
                 "SELECT id, name, country, placetype, latitude, longitude, min_longitude, min_latitude, max_longitude, max_latitude \
                  FROM spr \
-                 WHERE id IN ({}) AND placetype = 'locality' AND is_current = 1 AND is_deprecated = 0",
+                 WHERE id IN ({}) AND placetype IN ('region', 'county') AND is_current = 1 AND is_deprecated = 0",
                 placeholder_str
             );
 
             let mut stmt = conn.prepare(&query_str)?;
-            let params: Vec<&dyn rusqlite::ToSql> = locality_ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
-            let rows = stmt.query_map(params.as_slice(), |row| Locality::from_row(row))?;
+            let params: Vec<&dyn rusqlite::ToSql> = area_ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+            let rows = stmt.query_map(params.as_slice(), |row| AdministrativeArea::from_row(row))?;
 
-            let localities = rows.collect::<Result<Vec<_>, _>>()?;
-            Ok(localities)
+            let areas = rows.collect::<Result<Vec<_>, _>>()?;
+            Ok(areas)
         })
         .await?
     }
@@ -203,19 +203,19 @@ impl DatabaseService {
             let tx = conn.transaction()?;
 
             let query = r#"
-            INSERT OR REPLACE INTO locality_cids
-            (country_code, locality_id, cid, file_size, upload_time)
+            INSERT OR REPLACE INTO area_cids
+            (country_code, area_id, cid, file_size, upload_time)
             VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)
             "#;
 
-            for (country_code, locality_id, cid, file_size) in mappings {
-                let locality_id_i64 = locality_id as i64;
+            for (country_code, area_id, cid, file_size) in mappings {
+                let area_id_i64 = area_id as i64;
                 let file_size_i64 = file_size as i64;
                 tx.execute(
                     query,
                     rusqlite::params![
                         &country_code,
-                        &locality_id_i64,
+                        &area_id_i64,
                         &cid,
                         &file_size_i64,
                     ],
@@ -231,7 +231,7 @@ impl DatabaseService {
     pub async fn has_cid_mapping(
         &self,
         country_code: &str,
-        locality_id: u32,
+        area_id: u32,
     ) -> Result<bool, DatabaseError> {
         let conn = self.conn.clone();
         let country_code = country_code.to_string();
@@ -240,14 +240,14 @@ impl DatabaseService {
             let conn = conn.blocking_lock();
 
             let query = r#"
-            SELECT COUNT(*) as count FROM locality_cids
-            WHERE country_code = ?1 AND locality_id = ?2
+            SELECT COUNT(*) as count FROM area_cids
+            WHERE country_code = ?1 AND area_id = ?2
             "#;
 
-            let locality_id_i64 = locality_id as i64;
+            let area_id_i64 = area_id as i64;
             let count = conn.query_row(
                 query,
-                rusqlite::params![&country_code, &locality_id_i64],
+                rusqlite::params![&country_code, &area_id_i64],
                 |row| row.get::<_, i64>(0),
             )?;
 
@@ -262,12 +262,10 @@ impl DatabaseService {
         tokio::task::spawn_blocking(move || {
             let conn = conn.blocking_lock();
 
-            // Get total mappings count
-            let total_query = "SELECT COUNT(*) as count FROM locality_cids";
+            let total_query = "SELECT COUNT(*) as count FROM area_cids";
             let total_count = conn.query_row(total_query, [], |row| row.get::<_, i64>(0))?;
 
-            // Get unique countries count
-            let countries_query = "SELECT COUNT(DISTINCT country_code) as count FROM locality_cids";
+            let countries_query = "SELECT COUNT(DISTINCT country_code) as count FROM area_cids";
             let countries_count = conn.query_row(countries_query, [], |row| row.get::<_, i64>(0))?;
 
             Ok((total_count as u64, countries_count as u64))

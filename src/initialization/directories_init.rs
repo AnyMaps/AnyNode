@@ -7,9 +7,9 @@ use super::InitializationResult;
 pub async fn ensure_directories(config: &Config) -> InitializationResult<()> {
     info!("Ensuring required directories exist");
 
-    if !config.localities_dir.exists() {
-        tokio::fs::create_dir_all(&config.localities_dir).await?;
-        info!("Created localities directory: {:?}", config.localities_dir);
+    if !config.areas_dir.exists() {
+        tokio::fs::create_dir_all(&config.areas_dir).await?;
+        info!("Created areas directory: {:?}", config.areas_dir);
     }
 
     if let Some(planet_location) = &config.planet_pmtiles_location {

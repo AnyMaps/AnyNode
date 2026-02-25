@@ -5,15 +5,15 @@ use thiserror::Error;
 #[derive(Debug, Clone)]
 pub struct PendingUpload {
     pub country_code: String,
-    pub locality_id: u32,
+    pub area_id: u32,
     pub file_path: PathBuf,
 }
 
 impl PendingUpload {
-    pub fn new(country_code: String, locality_id: u32, file_path: PathBuf) -> Self {
+    pub fn new(country_code: String, area_id: u32, file_path: PathBuf) -> Self {
         Self {
             country_code,
-            locality_id,
+            area_id,
             file_path,
         }
     }
@@ -22,16 +22,16 @@ impl PendingUpload {
 #[derive(Debug, Clone)]
 pub struct CompletedUpload {
     pub country_code: String,
-    pub locality_id: u32,
+    pub area_id: u32,
     pub cid: String,
     pub file_size: u64,
 }
 
 impl CompletedUpload {
-    pub fn new(country_code: String, locality_id: u32, cid: String, file_size: u64) -> Self {
+    pub fn new(country_code: String, area_id: u32, cid: String, file_size: u64) -> Self {
         Self {
             country_code,
-            locality_id,
+            area_id,
             cid,
             file_size,
         }

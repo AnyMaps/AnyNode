@@ -3,7 +3,7 @@ use anynode::cli::Cli;
 use anynode::config::Config;
 use anynode::initialization::{
     ensure_database_is_present, ensure_directories, ensure_required_tools, initialize_cid_db,
-    initialize_country_service, initialize_extraction_service, initialize_locality_upload_service,
+    initialize_country_service, initialize_extraction_service, initialize_area_upload_service,
     initialize_storage_service, initialize_whosonfirst_db, print_startup_info, validate_config,
 };
 use std::sync::Arc;
@@ -72,17 +72,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
     let extraction_service = initialize_extraction_service(&config, whosonfirst_db.clone())?;
-    let upload_service = initialize_locality_upload_service(
+    let upload_service = initialize_area_upload_service(
         cid_db.clone(),
         whosonfirst_db.clone(),
         storage_service.clone(),
         &config,
     )?;
 
-    let locality_ids = cli.get_locality_ids(config.locality_ids.clone());
+    let area_ids = cli.get_area_ids(config.area_ids.clone());
 
-    if !locality_ids.is_empty() {
-        info!("Processing {} specific locality IDs", locality_ids.len());
+    if !area_ids.is_empty() {
+        info!("Processing {} specific area IDs", area_ids.len());
     } else {
         let countries = country_service.get_countries_to_process(&config.target_countries).await?;
         info!("Processing {} countries", countries.len());
@@ -94,7 +94,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         extraction_service,
         upload_service,
         country_service,
-        locality_ids,
+        area_ids,
         cli.should_skip_extract(),
     );
 
