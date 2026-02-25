@@ -29,8 +29,6 @@ pub async fn initialize_storage_service(
     let nat = nat_override.unwrap_or_else(|| config.nat.clone());
     let listen_addrs = listen_addrs_override.unwrap_or_else(|| config.listen_addrs.clone());
 
-    tokio::fs::create_dir_all(&data_dir).await?;
-
     if !bootstrap_nodes.is_empty() {
         info!("Using {} bootstrap node(s)", bootstrap_nodes.len());
     }
