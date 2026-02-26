@@ -84,6 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !area_ids.is_empty() {
         info!("Processing {} specific area IDs", area_ids.len());
     } else {
+        info!("Retrieving list of all countries...");
         let countries = country_service.get_countries_to_process(&config.target_countries).await?;
         info!("Processing {} countries", countries.len());
     }
