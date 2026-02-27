@@ -7,9 +7,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::info;
 
-pub fn initialize_country_service(whosonfirst_db: Arc<DatabaseService>) -> CountryService {
+pub fn initialize_country_service() -> CountryService {
     info!("Initializing country service");
-    let country_service = CountryService::new(whosonfirst_db);
+    let country_service = CountryService::new();
     info!("Country service initialized successfully");
     country_service
 }

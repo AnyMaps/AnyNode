@@ -60,8 +60,7 @@ impl NodeRunner {
             } else {
                 let countries = self
                     .country_service
-                    .get_countries_to_process(&self.config.target_countries)
-                    .await?;
+                    .get_countries_to_process(&self.config.target_countries);
                 info!("Processing {} countries", countries.len());
                 if let Err(e) = self.extraction_service.extract_areas(&countries).await {
                     error!("Failed to extract PMTiles: {}", e);

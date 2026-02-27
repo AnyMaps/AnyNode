@@ -58,7 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let whosonfirst_db = initialize_whosonfirst_db(&config).await?;
     let cid_db = initialize_cid_db(&config).await?;
-    let country_service = initialize_country_service(whosonfirst_db.clone());
+    let country_service = initialize_country_service();
     let bootstrap_nodes = cli.get_bootstrap_nodes(config.bootstrap_nodes.clone());
     let nat = cli.get_nat(config.nat.clone());
     let listen_addrs = cli.get_listen_addrs(config.listen_addrs.clone());
@@ -85,7 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("Processing {} specific area IDs", area_ids.len());
     } else {
         info!("Retrieving list of all countries...");
-        let countries = country_service.get_countries_to_process(&config.target_countries).await?;
+        let countries = country_service.get_countries_to_process(&config.target_countries);
         info!("Processing {} countries", countries.len());
     }
 

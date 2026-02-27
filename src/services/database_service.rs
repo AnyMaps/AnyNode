@@ -272,27 +272,4 @@ impl DatabaseService {
         })
         .await?
     }
-
-    pub async fn get_all_countries(&self) -> Result<Vec<String>, DatabaseError> {
-        let conn = self.conn.clone();
-
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.blocking_lock();
-
-            let mut stmt = conn.prepare(
-                "SELECT DISTINCT country FROM spr WHERE country IS NOT NULL AND country != '' ORDER BY country"
-            )?;
-
-            let country_iter = stmt.query_map([], |row| row.get::<_, String>(0))?;
-            let mut countries = Vec::new();
-
-            for country in country_iter {
-                countries.push(country?);
-            }
-
-            Ok::<Vec<String>, rusqlite::Error>(countries)
-        })
-        .await?
-        .map_err(|e| DatabaseError::RusqliteError(e))
-    }
 }
