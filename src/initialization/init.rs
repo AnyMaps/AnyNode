@@ -68,6 +68,7 @@ pub fn initialize_area_upload_service(
     whosonfirst_db: Arc<DatabaseService>,
     storage: Arc<StorageService>,
     config: &Config,
+    area_ids: Vec<u32>,
 ) -> super::InitializationResult<AreaUploadService> {
     info!("Initializing area upload service");
 
@@ -76,6 +77,8 @@ pub fn initialize_area_upload_service(
         whosonfirst_db,
         storage,
         config.areas_dir.clone(),
+        config.target_countries.clone(),
+        area_ids,
     );
 
     info!("Area upload service initialized successfully");

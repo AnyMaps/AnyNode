@@ -71,15 +71,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(listen_addrs),
     )
     .await?;
+    let area_ids = cli.get_area_ids(config.area_ids.clone());
+
     let extraction_service = initialize_extraction_service(&config, whosonfirst_db.clone())?;
     let upload_service = initialize_area_upload_service(
         cid_db.clone(),
         whosonfirst_db.clone(),
         storage_service.clone(),
         &config,
+        area_ids.clone(),
     )?;
-
-    let area_ids = cli.get_area_ids(config.area_ids.clone());
 
     if !area_ids.is_empty() {
         info!("Processing {} specific area IDs", area_ids.len());

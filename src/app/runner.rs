@@ -72,7 +72,7 @@ impl NodeRunner {
         }
 
         info!("Uploading areas to storage...");
-        self.upload_service.process_all_areas().await?;
+        self.upload_service.process_areas().await?;
 
         let stats = self.upload_service.get_stats().await;
         print_final_stats(&stats);

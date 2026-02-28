@@ -25,6 +25,8 @@ pub struct AreaUploadService {
     upload_queue: Arc<Mutex<UploadQueue>>,
     stats: Arc<Mutex<UploadStats>>,
     areas_dir: std::path::PathBuf,
+    target_countries: Vec<String>,
+    area_ids: Vec<u32>,
 }
 
 impl AreaUploadService {
@@ -33,6 +35,8 @@ impl AreaUploadService {
         whosonfirst_db: Arc<DatabaseService>,
         storage: Arc<StorageService>,
         areas_dir: std::path::PathBuf,
+        target_countries: Vec<String>,
+        area_ids: Vec<u32>,
     ) -> Self {
         Self {
             cid_db,
@@ -41,17 +45,27 @@ impl AreaUploadService {
             upload_queue: Arc::new(Mutex::new(UploadQueue::new(10, 100))),
             stats: Arc::new(Mutex::new(UploadStats::new())),
             areas_dir,
+            target_countries,
+            area_ids,
         }
     }
 
-    pub async fn process_all_areas(&self) -> Result<(), AreaUploadError> {
-        info!("Starting to process all areas by scanning filesystem for PMTiles files");
-
+    pub async fn process_areas(&self) -> Result<(), AreaUploadError> {
         if !self.areas_dir.exists() {
             warn!("Areas directory not found: {:?}", self.areas_dir);
             return Ok(());
         }
 
+        if !self.area_ids.is_empty() {
+            info!("Processing {} specific area IDs", self.area_ids.len());
+            self.process_areas_by_ids().await
+        } else {
+            info!("Processing areas by country from filesystem");
+            self.process_areas_by_country().await
+        }
+    }
+
+    async fn process_areas_by_country(&self) -> Result<(), AreaUploadError> {
         let mut total_files = 0;
         let mut processed_files = 0;
 
@@ -70,6 +84,11 @@ impl AreaUploadService {
                     AreaUploadError::QueueError("Invalid country directory name".to_string())
                 })?;
 
+            if !self.target_countries.is_empty() && !self.target_countries.contains(&country_code.to_string()) {
+                info!("Skipping country directory (not in target list): {}", country_code);
+                continue;
+            }
+
             info!("Scanning country directory: {}", country_code);
 
             let (country_files, country_processed) = self
@@ -86,7 +105,35 @@ impl AreaUploadService {
 
         let stats = self.stats.lock().await;
         info!(
-            "Filesystem scan completed! Total files found: {}, Total processed: {}, Total uploaded: {}, Total failed: {}, Total bytes: {}",
+            "Country scan completed! Total files found: {}, Total processed: {}, Total uploaded: {}, Total failed: {}, Total bytes: {}",
+            total_files, processed_files, stats.total_uploaded, stats.total_failed, stats.total_bytes_uploaded
+        );
+
+        Ok(())
+    }
+
+    async fn process_areas_by_ids(&self) -> Result<(), AreaUploadError> {
+        let mut total_files = 0;
+        let mut processed_files = 0;
+
+        for area_id in &self.area_ids {
+            let found = self.find_and_process_area_file(*area_id).await?;
+            if found {
+                total_files += 1;
+                processed_files += 1;
+            } else {
+                warn!("Area ID {} not found in filesystem", area_id);
+            }
+        }
+
+        if !self.upload_queue.lock().await.is_empty() {
+            info!("Processing remaining uploads in queue...");
+            self.process_upload_queue().await?;
+        }
+
+        let stats = self.stats.lock().await;
+        info!(
+            "Processing done. Total files found: {}, Total processed: {}, Total uploaded: {}, Total failed: {}, Total bytes: {}",
             total_files, processed_files, stats.total_uploaded, stats.total_failed, stats.total_bytes_uploaded
         );
 
@@ -150,6 +197,46 @@ impl AreaUploadService {
             country_code, total_files, processed_files
         );
         Ok((total_files, processed_files))
+    }
+
+    async fn find_and_process_area_file(&self, area_id: u32) -> Result<bool, AreaUploadError> {
+        for country_dir_entry in std::fs::read_dir(&self.areas_dir)? {
+            let country_dir = country_dir_entry?;
+            let country_path = country_dir.path();
+
+            if !country_path.is_dir() {
+                continue;
+            }
+
+            let file_path = country_path.join(format!("{}.pmtiles", area_id));
+            if file_path.exists() {
+                let country_code = country_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .ok_or_else(|| {
+                        AreaUploadError::QueueError("Invalid country directory name".to_string())
+                    })?;
+
+                match self.whosonfirst_db.get_area_by_id(area_id as i64).await {
+                    Ok(Some(_area)) => {
+                        if self.process_file_for_upload(&file_path, country_code, area_id).await? {
+                            return Ok(true);
+                        }
+                    }
+                    Ok(None) => {
+                        warn!(
+                            "Area ID {} found in filesystem but not in database, skipping",
+                            area_id
+                        );
+                    }
+                    Err(e) => {
+                        error!("Database error checking area {}: {}", area_id, e);
+                    }
+                }
+            }
+        }
+
+        Ok(false)
     }
 
     async fn process_file_for_upload(
