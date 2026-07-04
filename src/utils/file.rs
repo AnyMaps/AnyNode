@@ -44,7 +44,7 @@ pub async fn download_file_with_progress(url: &str, destination: &Path) -> Resul
                     tokio::time::sleep(tokio::time::Duration::from_secs(RETRY_DELAY_SECS)).await;
                 } else {
                     // Clean up temp file on final failure
-                    let _ = tokio::fs::remove_file(&temp_path).await;
+                    drop(tokio::fs::remove_file(&temp_path).await);
                     return Err(e);
                 }
             }
@@ -72,13 +72,11 @@ fn get_temp_path(destination: &Path) -> PathBuf {
 /// Create a progress bar with standard styling
 fn create_progress_bar(total_size: u64) -> ProgressBar {
     let pb = ProgressBar::new(total_size);
-    pb.set_style(
-        ProgressStyle::with_template(
-            "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})",
-        )
-        .unwrap()
-        .progress_chars("#>-"),
-    );
+    let style = ProgressStyle::with_template(
+        "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})",
+    )
+    .unwrap_or_else(|_| ProgressStyle::default_bar());
+    pb.set_style(style.progress_chars("#>-"));
     pb
 }
 
@@ -125,7 +123,7 @@ async fn download_attempt(
             // Parse total size from "bytes start-end/total"
             let total = content_range
                 .split('/')
-                .last()
+                .next_back()
                 .and_then(|s| s.parse::<u64>().ok())
                 .unwrap_or(existing_size);
 
@@ -193,4 +191,124 @@ async fn download_attempt(
 
     info!("Download completed: {}", temp_path.display());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+    use wiremock::{
+        matchers::{method, path},
+        Mock, MockServer, ResponseTemplate,
+    };
+
+    fn setup_time_mock() {
+        tokio::time::pause();
+    }
+
+    #[tokio::test]
+    async fn download_success() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/file.db"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("test database content"))
+            .mount(&server)
+            .await;
+
+        let temp_dir = TempDir::new().unwrap();
+        let dest = temp_dir.path().join("file.db");
+
+        let result = download_file_with_progress(&format!("{}/file.db", server.uri()), &dest).await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn download_creates_file() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/data.bin"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("binary data"))
+            .mount(&server)
+            .await;
+
+        let temp_dir = TempDir::new().unwrap();
+        let dest = temp_dir.path().join("data.bin");
+
+        download_file_with_progress(&format!("{}/data.bin", server.uri()), &dest)
+            .await
+            .unwrap();
+
+        assert!(dest.exists());
+    }
+
+    #[tokio::test]
+    async fn download_http_error_404() {
+        setup_time_mock();
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/missing.db"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let temp_dir = TempDir::new().unwrap();
+        let dest = temp_dir.path().join("missing.db");
+
+        let result =
+            download_file_with_progress(&format!("{}/missing.db", server.uri()), &dest).await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("HTTP error"));
+    }
+
+    #[tokio::test]
+    async fn download_http_error_500() {
+        setup_time_mock();
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/error.db"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let temp_dir = TempDir::new().unwrap();
+        let dest = temp_dir.path().join("error.db");
+
+        let result =
+            download_file_with_progress(&format!("{}/error.db", server.uri()), &dest).await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("HTTP error"));
+    }
+
+    #[tokio::test]
+    async fn download_content_correct() {
+        let server = MockServer::start().await;
+
+        let expected_content = "test database content with specific data";
+        Mock::given(method("GET"))
+            .and(path("/file.db"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(expected_content))
+            .mount(&server)
+            .await;
+
+        let temp_dir = TempDir::new().unwrap();
+        let dest = temp_dir.path().join("file.db");
+
+        download_file_with_progress(&format!("{}/file.db", server.uri()), &dest)
+            .await
+            .unwrap();
+
+        let content = std::fs::read_to_string(&dest).unwrap();
+        assert_eq!(content, expected_content);
+    }
 }

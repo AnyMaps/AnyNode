@@ -1,4 +1,4 @@
-use crate::services::{DatabaseService, StorageService};
+use crate::services::{DatabaseService, KuboServiceTrait};
 use crate::types::{CompletedUpload, PendingUpload, UploadQueue, UploadStats};
 use futures::future::join_all;
 use std::sync::Arc;
@@ -10,8 +10,8 @@ use tracing::{error, info, warn};
 pub enum AreaUploadError {
     #[error("Database error: {0}")]
     DatabaseError(#[from] crate::services::DatabaseError),
-    #[error("Storage error: {0}")]
-    StorageError(#[from] crate::services::StorageError),
+    #[error("Kubo service error: {0}")]
+    KuboServiceError(#[from] crate::services::KuboServiceError),
     #[error("File error: {0}")]
     FileError(#[from] std::io::Error),
     #[error("Upload queue error: {0}")]
@@ -21,7 +21,7 @@ pub enum AreaUploadError {
 pub struct AreaUploadService {
     cid_db: Arc<DatabaseService>,
     whosonfirst_db: Arc<DatabaseService>,
-    storage: Arc<StorageService>,
+    kubo: Arc<dyn KuboServiceTrait>,
     upload_queue: Arc<Mutex<UploadQueue>>,
     stats: Arc<Mutex<UploadStats>>,
     areas_dir: std::path::PathBuf,
@@ -33,7 +33,7 @@ impl AreaUploadService {
     pub fn new(
         cid_db: Arc<DatabaseService>,
         whosonfirst_db: Arc<DatabaseService>,
-        storage: Arc<StorageService>,
+        kubo: Arc<dyn KuboServiceTrait>,
         areas_dir: std::path::PathBuf,
         target_countries: Vec<String>,
         area_ids: Vec<u32>,
@@ -41,9 +41,9 @@ impl AreaUploadService {
         Self {
             cid_db,
             whosonfirst_db,
-            storage,
+            kubo,
             upload_queue: Arc::new(Mutex::new(UploadQueue::new(10, 100))),
-            stats: Arc::new(Mutex::new(UploadStats::new())),
+            stats: Arc::new(Mutex::new(UploadStats::default())),
             areas_dir,
             target_countries,
             area_ids,
@@ -84,8 +84,13 @@ impl AreaUploadService {
                     AreaUploadError::QueueError("Invalid country directory name".to_string())
                 })?;
 
-            if !self.target_countries.is_empty() && !self.target_countries.contains(&country_code.to_string()) {
-                info!("Skipping country directory (not in target list): {}", country_code);
+            if !self.target_countries.is_empty()
+                && !self.target_countries.contains(&country_code.to_string())
+            {
+                info!(
+                    "Skipping country directory (not in target list): {}",
+                    country_code
+                );
                 continue;
             }
 
@@ -167,11 +172,7 @@ impl AreaUploadService {
                 AreaUploadError::QueueError(format!("Invalid area ID in filename: {}", filename))
             })?;
 
-            match self
-                .whosonfirst_db
-                .get_area_by_id(area_id as i64)
-                .await
-            {
+            match self.whosonfirst_db.get_area_by_id(area_id as i64).await {
                 Ok(Some(_area)) => {
                     if self
                         .process_file_for_upload(&file_path, country_code, area_id)
@@ -219,7 +220,10 @@ impl AreaUploadService {
 
                 match self.whosonfirst_db.get_area_by_id(area_id as i64).await {
                     Ok(Some(_area)) => {
-                        if self.process_file_for_upload(&file_path, country_code, area_id).await? {
+                        if self
+                            .process_file_for_upload(&file_path, country_code, area_id)
+                            .await?
+                        {
                             return Ok(true);
                         }
                     }
@@ -250,21 +254,18 @@ impl AreaUploadService {
             return Ok(false);
         }
 
-        let pending_upload = PendingUpload::new(
-            country_code.to_string(),
-            area_id,
-            file_path.to_path_buf(),
-        );
+        let pending_upload =
+            PendingUpload::new(country_code.to_string(), area_id, file_path.to_path_buf());
 
         {
             let mut queue = self.upload_queue.lock().await;
-            if let Err(e) = queue.add_upload(pending_upload) {
-                warn!("Failed to add upload to queue: {}", e);
+            if !queue.add_upload(pending_upload) {
+                warn!("Failed to add upload to queue: queue is full");
                 return Ok(false);
             }
         }
 
-        if self.upload_queue.lock().await.is_full() {
+        if self.upload_queue.lock().await.is_batch_ready() {
             self.process_upload_queue().await?;
         }
 
@@ -348,7 +349,7 @@ impl AreaUploadService {
             pending.area_id, pending.country_code, file_size
         );
 
-        let result = self.storage.upload_file(file_path).await.map_err(|e| {
+        let result = self.kubo.upload_file(file_path).await.map_err(|e| {
             error!("Upload failed for area {}: {}", pending.area_id, e);
             e
         })?;
@@ -392,5 +393,319 @@ impl AreaUploadService {
 
     pub async fn get_stats(&self) -> UploadStats {
         self.stats.lock().await.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::services::{
+        KuboService, KuboServiceError, KuboServiceStatus, NodeInfo, UploadResult,
+    };
+    use async_trait::async_trait;
+    use mockall::mock;
+    use rusqlite::Connection;
+    use std::path::PathBuf;
+    use std::time::Duration;
+    use tempfile::TempDir;
+
+    mock! {
+        pub KuboService {}
+
+        #[async_trait]
+        impl KuboServiceTrait for KuboService {
+            async fn check_alive(&self) -> Result<(), KuboServiceError>;
+            fn get_status(&self) -> KuboServiceStatus;
+            async fn get_node_info(&self) -> Result<NodeInfo, KuboServiceError>;
+            async fn upload_file(&self, file_path: &std::path::Path) -> Result<UploadResult, KuboServiceError>;
+            fn is_connected(&self) -> bool;
+        }
+    }
+
+    fn create_test_config() -> Config {
+        Config {
+            kubo_api_url: "http://127.0.0.1:9999".to_string(),
+            kubo_api_timeout: Duration::from_secs(5),
+            pin_on_upload: false,
+            kubo_api_username: None,
+            kubo_api_password: None,
+            whosonfirst_db_path: PathBuf::from(":memory:"),
+            cid_db_path: PathBuf::from(":memory:"),
+            areas_dir: PathBuf::from("/nonexistent"),
+            bzip2_cmd: "bzip2".to_string(),
+            pmtiles_cmd: "pmtiles".to_string(),
+            target_countries: vec![],
+            area_ids: vec![],
+            max_concurrent_extractions: 1,
+            planet_pmtiles_location: None,
+            whosonfirst_db_url: String::new(),
+        }
+    }
+
+    fn create_test_db() -> DatabaseService {
+        let conn = Connection::open_in_memory().expect("Failed to create in-memory database");
+        DatabaseService::from_connection(conn, true).expect("Failed to create DatabaseService")
+    }
+
+    fn create_spr_table(conn: &Connection) {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS spr (
+                id INTEGER PRIMARY KEY,
+                name TEXT,
+                country TEXT,
+                placetype TEXT,
+                latitude REAL,
+                longitude REAL,
+                min_longitude REAL,
+                min_latitude REAL,
+                max_longitude REAL,
+                max_latitude REAL,
+                is_current INTEGER DEFAULT 1,
+                is_deprecated INTEGER DEFAULT 0
+            )",
+            [],
+        )
+        .expect("Failed to create spr table");
+    }
+
+    fn insert_test_area(conn: &Connection, id: i64, name: &str, country: &str, placetype: &str) {
+        conn.execute(
+            "INSERT INTO spr (id, name, country, placetype, latitude, longitude, min_longitude, min_latitude, max_longitude, max_latitude, is_current, is_deprecated)
+             VALUES (?1, ?2, ?3, ?4, 37.5, -119.5, -124.5, 32.5, -114.1, 42.0, 1, 0)",
+            rusqlite::params![id, name, country, placetype],
+        )
+        .expect("Failed to insert test area");
+    }
+
+    fn create_test_db_with_areas(area_ids: &[i64]) -> DatabaseService {
+        let conn = Connection::open_in_memory().expect("Failed to create in-memory database");
+        create_spr_table(&conn);
+        for id in area_ids {
+            insert_test_area(&conn, *id, &format!("Area {}", id), "US", "region");
+        }
+        DatabaseService::from_connection(conn, true).expect("Failed to create DatabaseService")
+    }
+
+    fn create_test_kubo() -> Arc<KuboService> {
+        let config = create_test_config();
+        Arc::new(KuboService::new(&config).expect("Failed to create KuboService"))
+    }
+
+    fn create_test_service(
+        areas_dir: PathBuf,
+        target_countries: Vec<String>,
+        area_ids: Vec<u32>,
+    ) -> AreaUploadService {
+        let cid_db = Arc::new(create_test_db());
+        let whosonfirst_db = Arc::new(create_test_db());
+        let kubo = create_test_kubo();
+
+        AreaUploadService::new(
+            cid_db,
+            whosonfirst_db,
+            kubo,
+            areas_dir,
+            target_countries,
+            area_ids,
+        )
+    }
+
+    fn create_mock_service(
+        areas_dir: PathBuf,
+        target_countries: Vec<String>,
+        area_ids: Vec<u32>,
+        mock_kubo: MockKuboService,
+    ) -> AreaUploadService {
+        let cid_db = Arc::new(create_test_db());
+        let whosonfirst_db = Arc::new(create_test_db());
+        let kubo = Arc::new(mock_kubo) as Arc<dyn KuboServiceTrait>;
+
+        AreaUploadService::new(
+            cid_db,
+            whosonfirst_db,
+            kubo,
+            areas_dir,
+            target_countries,
+            area_ids,
+        )
+    }
+
+    #[test]
+    fn new_creates_service() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let service = create_test_service(temp_dir.path().to_path_buf(), vec![], vec![]);
+        assert!(service.areas_dir.exists());
+    }
+
+    #[tokio::test]
+    async fn get_stats_initial() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let service = create_test_service(temp_dir.path().to_path_buf(), vec![], vec![]);
+        let stats = service.get_stats().await;
+        assert_eq!(stats.total_uploaded, 0);
+        assert_eq!(stats.total_failed, 0);
+        assert_eq!(stats.total_bytes_uploaded, 0);
+    }
+
+    #[tokio::test]
+    async fn process_areas_missing_dir() {
+        let service = create_test_service(PathBuf::from("/nonexistent/path"), vec![], vec![]);
+        let result = service.process_areas().await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn process_areas_by_ids_empty() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let service = create_test_service(temp_dir.path().to_path_buf(), vec![], vec![]);
+        let result = service.process_areas().await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn process_areas_with_file() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let country_dir = temp_dir.path().join("US");
+        std::fs::create_dir_all(&country_dir).expect("Failed to create country dir");
+
+        let pmtiles_path = country_dir.join("12345.pmtiles");
+        std::fs::write(&pmtiles_path, b"fake pmtiles data").expect("Failed to write test file");
+
+        let mut mock_kubo = MockKuboService::new();
+        mock_kubo.expect_upload_file().returning(|_| {
+            Ok(UploadResult {
+                cid: "QmTestCID123".to_string(),
+                size: 18,
+            })
+        });
+
+        let cid_db = Arc::new(create_test_db());
+        let whosonfirst_db = Arc::new(create_test_db_with_areas(&[12345]));
+
+        let service = AreaUploadService::new(
+            cid_db,
+            whosonfirst_db,
+            Arc::new(mock_kubo),
+            temp_dir.path().to_path_buf(),
+            vec!["US".to_string()],
+            vec![],
+        );
+
+        let result = service.process_areas().await;
+        assert!(result.is_ok());
+
+        let stats = service.get_stats().await;
+        assert_eq!(stats.total_uploaded, 1);
+    }
+
+    #[tokio::test]
+    async fn upload_single_file() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let file_path = temp_dir.path().join("test.pmtiles");
+        std::fs::write(&file_path, b"test data").expect("Failed to write test file");
+
+        let mut mock_kubo = MockKuboService::new();
+        mock_kubo.expect_upload_file().returning(|_| {
+            Ok(UploadResult {
+                cid: "QmTestCID456".to_string(),
+                size: 9,
+            })
+        });
+
+        let service = create_mock_service(temp_dir.path().to_path_buf(), vec![], vec![], mock_kubo);
+
+        let pending = PendingUpload::new("US".to_string(), 12345, file_path);
+
+        let result = service.upload_single_file(pending).await;
+        assert!(result.is_ok());
+
+        let upload = result.unwrap();
+        assert_eq!(upload.cid, "QmTestCID456");
+        assert_eq!(upload.area_id, 12345);
+    }
+
+    #[tokio::test]
+    async fn upload_single_file_not_found() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        let mock_kubo = MockKuboService::new();
+
+        let service = create_mock_service(temp_dir.path().to_path_buf(), vec![], vec![], mock_kubo);
+
+        let pending = PendingUpload::new(
+            "US".to_string(),
+            99999,
+            PathBuf::from("/nonexistent/file.pmtiles"),
+        );
+
+        let result = service.upload_single_file(pending).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn upload_single_file_kubo_error() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let file_path = temp_dir.path().join("test.pmtiles");
+        std::fs::write(&file_path, b"test data").expect("Failed to write test file");
+
+        let mut mock_kubo = MockKuboService::new();
+        mock_kubo.expect_upload_file().returning(|_| {
+            Err(KuboServiceError::UploadFailed(
+                "Connection refused".to_string(),
+            ))
+        });
+
+        let service = create_mock_service(temp_dir.path().to_path_buf(), vec![], vec![], mock_kubo);
+
+        let pending = PendingUpload::new("US".to_string(), 12345, file_path);
+
+        let result = service.upload_single_file(pending).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn batch_update_cid_mappings() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let country_dir = temp_dir.path().join("US");
+        std::fs::create_dir_all(&country_dir).expect("Failed to create country dir");
+
+        let file1 = country_dir.join("100.pmtiles");
+        let file2 = country_dir.join("200.pmtiles");
+        std::fs::write(&file1, b"data1").expect("Failed to write test file");
+        std::fs::write(&file2, b"data2").expect("Failed to write test file");
+
+        let mut mock_kubo = MockKuboService::new();
+        mock_kubo
+            .expect_upload_file()
+            .returning(|_| {
+                Ok(UploadResult {
+                    cid: "QmCID1".to_string(),
+                    size: 5,
+                })
+            })
+            .times(2);
+
+        let cid_db = Arc::new(create_test_db());
+        let whosonfirst_db = Arc::new(create_test_db_with_areas(&[100, 200]));
+
+        let service = AreaUploadService::new(
+            cid_db.clone(),
+            whosonfirst_db,
+            Arc::new(mock_kubo),
+            temp_dir.path().to_path_buf(),
+            vec!["US".to_string()],
+            vec![],
+        );
+
+        let result = service.process_areas().await;
+        assert!(result.is_ok());
+
+        let stats = service.get_stats().await;
+        assert_eq!(stats.total_uploaded, 2);
+        assert!(stats.total_bytes_uploaded > 0);
+
+        assert!(cid_db.has_cid_mapping("US", 100).await.unwrap());
+        assert!(cid_db.has_cid_mapping("US", 200).await.unwrap());
     }
 }

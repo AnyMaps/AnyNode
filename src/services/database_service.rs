@@ -33,34 +33,51 @@ impl DatabaseService {
         Ok(service)
     }
 
+    fn create_cid_tables_sync(conn: &Connection) -> Result<(), DatabaseError> {
+        let create_cid_table = r#"
+        CREATE TABLE IF NOT EXISTS area_cids (
+            country_code TEXT NOT NULL,
+            area_id INTEGER NOT NULL,
+            cid TEXT NOT NULL,
+            upload_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+            file_size INTEGER,
+            PRIMARY KEY (country_code, area_id)
+        )
+        "#;
+
+        let create_cid_index = r#"
+        CREATE INDEX IF NOT EXISTS idx_area_cids_lookup
+        ON area_cids(country_code, area_id)
+        "#;
+
+        conn.execute(create_cid_table, [])?;
+        conn.execute(create_cid_index, [])?;
+
+        Ok(())
+    }
+
     async fn create_cid_tables(&self) -> Result<(), DatabaseError> {
         let conn = self.conn.clone();
 
         tokio::task::spawn_blocking(move || {
             let conn = conn.blocking_lock();
-
-            let create_cid_table = r#"
-            CREATE TABLE IF NOT EXISTS area_cids (
-                country_code TEXT NOT NULL,
-                area_id INTEGER NOT NULL,
-                cid TEXT NOT NULL,
-                upload_time DATETIME DEFAULT CURRENT_TIMESTAMP,
-                file_size INTEGER,
-                PRIMARY KEY (country_code, area_id)
-            )
-            "#;
-
-            let create_cid_index = r#"
-            CREATE INDEX IF NOT EXISTS idx_area_cids_lookup
-            ON area_cids(country_code, area_id)
-            "#;
-
-            conn.execute(create_cid_table, [])?;
-            conn.execute(create_cid_index, [])?;
-
+            Self::create_cid_tables_sync(&conn)?;
             Ok::<(), DatabaseError>(())
         })
         .await?
+    }
+
+    #[cfg(test)]
+    pub fn from_connection(
+        conn: Connection,
+        create_cid_tables: bool,
+    ) -> Result<Self, DatabaseError> {
+        if create_cid_tables {
+            Self::create_cid_tables_sync(&conn)?;
+        }
+        Ok(Self {
+            conn: Arc::new(Mutex::new(conn)),
+        })
     }
 
     pub async fn get_country_areas(
@@ -95,36 +112,10 @@ impl DatabaseService {
             );
 
             let mut stmt = conn.prepare(&query_str)?;
-            let rows = stmt.query_map([&country_code], |row| AdministrativeArea::from_row(row))?;
+            let rows = stmt.query_map([&country_code], AdministrativeArea::from_row)?;
 
             let areas = rows.collect::<Result<Vec<_>, _>>()?;
             Ok(areas)
-        })
-        .await?
-    }
-
-    pub async fn get_country_area_count(
-        &self,
-        country_code: &str,
-    ) -> Result<u32, DatabaseError> {
-        let conn = self.conn.clone();
-        let country_code = country_code.to_string();
-
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.blocking_lock();
-
-            let conditions = [
-                "placetype IN ('region', 'county')",
-                "is_current = 1",
-                "is_deprecated = 0",
-                "country = ?1",
-            ];
-
-            let where_clause = conditions.join(" AND ");
-            let query_str = format!("SELECT COUNT(*) as count FROM spr WHERE {}", where_clause);
-
-            let count = conn.query_row(&query_str, [&country_code], |row| row.get::<_, i64>(0))?;
-            Ok(count as u32)
         })
         .await?
     }
@@ -145,7 +136,7 @@ impl DatabaseService {
             "#;
 
             let mut stmt = conn.prepare(query)?;
-            let rows = stmt.query_map([&area_id], |row| AdministrativeArea::from_row(row))?;
+            let rows = stmt.query_map([&area_id], AdministrativeArea::from_row)?;
 
             let areas: Result<Vec<_>, _> = rows.collect();
             match areas {
@@ -182,7 +173,7 @@ impl DatabaseService {
 
             let mut stmt = conn.prepare(&query_str)?;
             let params: Vec<&dyn rusqlite::ToSql> = area_ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
-            let rows = stmt.query_map(params.as_slice(), |row| AdministrativeArea::from_row(row))?;
+            let rows = stmt.query_map(params.as_slice(), AdministrativeArea::from_row)?;
 
             let areas = rows.collect::<Result<Vec<_>, _>>()?;
             Ok(areas)
@@ -213,12 +204,7 @@ impl DatabaseService {
                 let file_size_i64 = file_size as i64;
                 tx.execute(
                     query,
-                    rusqlite::params![
-                        &country_code,
-                        &area_id_i64,
-                        &cid,
-                        &file_size_i64,
-                    ],
+                    rusqlite::params![&country_code, &area_id_i64, &cid, &file_size_i64,],
                 )?;
             }
 
@@ -255,21 +241,304 @@ impl DatabaseService {
         })
         .await?
     }
+}
 
-    pub async fn get_cid_mapping_stats(&self) -> Result<(u64, u64), DatabaseError> {
-        let conn = self.conn.clone();
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.blocking_lock();
+    fn create_spr_table(conn: &Connection) {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS spr (
+                id INTEGER PRIMARY KEY,
+                name TEXT,
+                country TEXT,
+                placetype TEXT,
+                latitude REAL,
+                longitude REAL,
+                min_longitude REAL,
+                min_latitude REAL,
+                max_longitude REAL,
+                max_latitude REAL,
+                is_current INTEGER DEFAULT 1,
+                is_deprecated INTEGER DEFAULT 0
+            )",
+            [],
+        )
+        .expect("Failed to create spr table");
+    }
 
-            let total_query = "SELECT COUNT(*) as count FROM area_cids";
-            let total_count = conn.query_row(total_query, [], |row| row.get::<_, i64>(0))?;
+    fn insert_test_area(
+        conn: &Connection,
+        id: i64,
+        name: &str,
+        country: &str,
+        placetype: &str,
+        is_current: i32,
+        is_deprecated: i32,
+    ) {
+        conn.execute(
+            "INSERT INTO spr (id, name, country, placetype, latitude, longitude, min_longitude, min_latitude, max_longitude, max_latitude, is_current, is_deprecated)
+             VALUES (?1, ?2, ?3, ?4, 37.5, -119.5, -124.5, 32.5, -114.1, 42.0, ?5, ?6)",
+            rusqlite::params![id, name, country, placetype, is_current, is_deprecated],
+        )
+        .expect("Failed to insert test area");
+    }
 
-            let countries_query = "SELECT COUNT(DISTINCT country_code) as count FROM area_cids";
-            let countries_count = conn.query_row(countries_query, [], |row| row.get::<_, i64>(0))?;
+    fn create_test_db_with_spr_data() -> DatabaseService {
+        let conn = Connection::open_in_memory().expect("Failed to create in-memory database");
+        create_spr_table(&conn);
 
-            Ok((total_count as u64, countries_count as u64))
+        insert_test_area(&conn, 1, "California", "US", "region", 1, 0);
+        insert_test_area(&conn, 2, "Texas", "US", "region", 1, 0);
+        insert_test_area(&conn, 3, "Los Angeles County", "US", "county", 1, 0);
+        insert_test_area(&conn, 4, "Los Angeles", "US", "locality", 1, 0);
+        insert_test_area(&conn, 5, "Deprecated Region", "US", "region", 1, 1);
+        insert_test_area(&conn, 6, "Inactive Region", "US", "region", 0, 0);
+
+        DatabaseService::from_connection(conn, true).expect("Failed to create DatabaseService")
+    }
+
+    #[tokio::test]
+    async fn new_in_memory_no_tables() {
+        let conn = Connection::open_in_memory().expect("Failed to create in-memory database");
+        let service = DatabaseService::from_connection(conn, false);
+        assert!(service.is_ok());
+    }
+
+    #[tokio::test]
+    async fn new_in_memory_creates_tables() {
+        let conn = Connection::open_in_memory().expect("Failed to create in-memory database");
+        let service =
+            DatabaseService::from_connection(conn, true).expect("Failed to create service");
+
+        let exists: bool = tokio::task::spawn_blocking(move || {
+            service
+                .conn
+                .blocking_lock()
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='area_cids')",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("Failed to check table existence")
         })
-        .await?
+        .await
+        .expect("spawn_blocking failed");
+        assert!(exists);
+    }
+
+    #[tokio::test]
+    async fn has_cid_mapping_false() {
+        let conn = Connection::open_in_memory().expect("Failed to create in-memory database");
+        let service =
+            DatabaseService::from_connection(conn, true).expect("Failed to create service");
+
+        let has_mapping = service
+            .has_cid_mapping("US", 12345)
+            .await
+            .expect("has_cid_mapping failed");
+        assert!(!has_mapping);
+    }
+
+    #[tokio::test]
+    async fn has_cid_mapping_true() {
+        let conn = Connection::open_in_memory().expect("Failed to create in-memory database");
+        let service =
+            DatabaseService::from_connection(conn, true).expect("Failed to create service");
+
+        service
+            .batch_insert_cid_mappings(&[("US".to_string(), 12345, "cid123".to_string(), 1024)])
+            .await
+            .expect("batch_insert failed");
+
+        let has_mapping = service
+            .has_cid_mapping("US", 12345)
+            .await
+            .expect("has_cid_mapping failed");
+        assert!(has_mapping);
+    }
+
+    #[tokio::test]
+    async fn batch_insert_cid_mappings() {
+        let conn = Connection::open_in_memory().expect("Failed to create in-memory database");
+        let service =
+            DatabaseService::from_connection(conn, true).expect("Failed to create service");
+
+        let mappings = vec![
+            ("US".to_string(), 1, "cid1".to_string(), 100),
+            ("US".to_string(), 2, "cid2".to_string(), 200),
+            ("CA".to_string(), 3, "cid3".to_string(), 300),
+        ];
+
+        service
+            .batch_insert_cid_mappings(&mappings)
+            .await
+            .expect("batch_insert failed");
+
+        assert!(service
+            .has_cid_mapping("US", 1)
+            .await
+            .expect("has_cid_mapping failed"));
+        assert!(service
+            .has_cid_mapping("US", 2)
+            .await
+            .expect("has_cid_mapping failed"));
+        assert!(service
+            .has_cid_mapping("CA", 3)
+            .await
+            .expect("has_cid_mapping failed"));
+    }
+
+    #[tokio::test]
+    async fn batch_insert_cid_mappings_replaces() {
+        let conn = Connection::open_in_memory().expect("Failed to create in-memory database");
+        let service =
+            DatabaseService::from_connection(conn, true).expect("Failed to create service");
+
+        service
+            .batch_insert_cid_mappings(&[("US".to_string(), 1, "cid_old".to_string(), 100)])
+            .await
+            .expect("batch_insert failed");
+
+        service
+            .batch_insert_cid_mappings(&[("US".to_string(), 1, "cid_new".to_string(), 200)])
+            .await
+            .expect("batch_insert failed");
+
+        let (count, cid) = tokio::task::spawn_blocking(move || {
+            let guard = service.conn.blocking_lock();
+            let count: i64 = guard
+                .query_row(
+                    "SELECT COUNT(*) FROM area_cids WHERE country_code = 'US' AND area_id = 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("Failed to count rows");
+            let cid: String = guard
+                .query_row(
+                    "SELECT cid FROM area_cids WHERE country_code = 'US' AND area_id = 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("Failed to get cid");
+            (count, cid)
+        })
+        .await
+        .expect("spawn_blocking failed");
+
+        assert_eq!(count, 1);
+        assert_eq!(cid, "cid_new");
+    }
+
+    #[tokio::test]
+    async fn get_country_areas_empty_db() {
+        let service = create_test_db_with_spr_data();
+
+        let areas = service
+            .get_country_areas("DE")
+            .await
+            .expect("get_country_areas failed");
+        assert!(areas.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_country_areas_returns_areas() {
+        let service = create_test_db_with_spr_data();
+
+        let areas = service
+            .get_country_areas("US")
+            .await
+            .expect("get_country_areas failed");
+
+        assert_eq!(areas.len(), 3);
+        let names: Vec<&str> = areas.iter().map(|a| a.name.as_str()).collect();
+        assert!(names.contains(&"California"));
+        assert!(names.contains(&"Texas"));
+        assert!(names.contains(&"Los Angeles County"));
+    }
+
+    #[tokio::test]
+    async fn get_country_areas_filters_placetype() {
+        let service = create_test_db_with_spr_data();
+
+        let areas = service
+            .get_country_areas("US")
+            .await
+            .expect("get_country_areas failed");
+
+        for area in &areas {
+            assert!(area.placetype == "region" || area.placetype == "county");
+            assert_ne!(area.placetype, "locality");
+        }
+    }
+
+    #[tokio::test]
+    async fn get_country_areas_filters_deprecated() {
+        let service = create_test_db_with_spr_data();
+
+        let areas = service
+            .get_country_areas("US")
+            .await
+            .expect("get_country_areas failed");
+
+        let names: Vec<&str> = areas.iter().map(|a| a.name.as_str()).collect();
+        assert!(!names.contains(&"Deprecated Region"));
+        assert!(!names.contains(&"Inactive Region"));
+    }
+
+    #[tokio::test]
+    async fn get_area_by_id_found() {
+        let service = create_test_db_with_spr_data();
+
+        let area = service
+            .get_area_by_id(1)
+            .await
+            .expect("get_area_by_id failed");
+        assert!(area.is_some());
+
+        let area = area.unwrap();
+        assert_eq!(area.id, 1);
+        assert_eq!(area.name, "California");
+        assert_eq!(area.country, "US");
+        assert_eq!(area.placetype, "region");
+    }
+
+    #[tokio::test]
+    async fn get_area_by_id_not_found() {
+        let service = create_test_db_with_spr_data();
+
+        let area = service
+            .get_area_by_id(99999)
+            .await
+            .expect("get_area_by_id failed");
+        assert!(area.is_none());
+    }
+
+    #[tokio::test]
+    async fn get_areas_by_ids_empty() {
+        let service = create_test_db_with_spr_data();
+
+        let areas = service
+            .get_areas_by_ids(&[])
+            .await
+            .expect("get_areas_by_ids failed");
+        assert!(areas.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_areas_by_ids_multiple() {
+        let service = create_test_db_with_spr_data();
+
+        let areas = service
+            .get_areas_by_ids(&[1, 2, 3])
+            .await
+            .expect("get_areas_by_ids failed");
+
+        assert_eq!(areas.len(), 3);
+        let ids: Vec<i64> = areas.iter().map(|a| a.id).collect();
+        assert!(ids.contains(&1));
+        assert!(ids.contains(&2));
+        assert!(ids.contains(&3));
     }
 }

@@ -13,8 +13,8 @@ pub enum InitializationError {
     ConfigError(#[from] crate::config::ConfigError),
     #[error("Database error: {0}")]
     DatabaseError(#[from] crate::services::DatabaseError),
-    #[error("Storage error: {0}")]
-    StorageError(#[from] crate::services::StorageError),
+    #[error("Kubo service error: {0}")]
+    KuboServiceError(#[from] crate::services::KuboServiceError),
     #[error("Extraction error: {0}")]
     ExtractionError(#[from] crate::services::ExtractionError),
     #[error("IO error: {0}")]
@@ -27,6 +27,8 @@ pub enum InitializationError {
     CmdError(#[from] crate::utils::CmdError),
     #[error("Database is missing and download is disabled")]
     DatabaseMissing,
+    #[error("Invalid UTF-8 in path: {0}")]
+    InvalidPath(String),
 }
 
 pub type InitializationResult<T> = Result<T, InitializationError>;
@@ -35,8 +37,8 @@ pub use database_init::{initialize_cid_db, initialize_whosonfirst_db};
 pub use directories_init::ensure_directories;
 pub use download_init::ensure_database_is_present;
 pub use init::{
-    initialize_country_service, initialize_extraction_service, initialize_area_upload_service,
-    initialize_storage_service, print_final_stats, print_startup_info,
+    initialize_area_upload_service, initialize_country_service, initialize_extraction_service,
+    initialize_kubo_service, print_final_stats, print_startup_info,
 };
 pub use tools_init::ensure_required_tools;
 pub use validation_init::validate_config;

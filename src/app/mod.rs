@@ -1,4 +1,3 @@
-pub mod monitor;
 pub mod runner;
 
 use thiserror::Error;
@@ -11,8 +10,8 @@ pub enum ApplicationError {
     ExtractionError(#[from] crate::services::ExtractionError),
     #[error("Upload error: {0}")]
     UploadError(#[from] crate::services::AreaUploadError),
-    #[error("Storage error: {0}")]
-    StorageError(#[from] crate::services::StorageError),
+    #[error("Kubo service error: {0}")]
+    KuboServiceError(#[from] crate::services::KuboServiceError),
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
 }
