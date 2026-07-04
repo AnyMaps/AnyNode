@@ -1,9 +1,8 @@
 use crate::config::Config;
 use crate::services::{
-    AreaUploadService, CountryService, DatabaseService, ExtractionService, StorageService,
+    AreaUploadService, CountryService, DatabaseService, ExtractionService, KuboService,
 };
 use crate::types::UploadStats;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::info;
 
@@ -14,41 +13,16 @@ pub fn initialize_country_service() -> CountryService {
     country_service
 }
 
-pub async fn initialize_storage_service(
+pub async fn initialize_kubo_service(
     config: &Config,
-    port_override: Option<u16>,
-    data_dir_override: Option<PathBuf>,
-    bootstrap_nodes: Vec<String>,
-    nat_override: Option<String>,
-    listen_addrs_override: Option<Vec<String>>,
-) -> super::InitializationResult<Arc<StorageService>> {
-    info!("Initializing storage service");
+) -> super::InitializationResult<Arc<KuboService>> {
+    info!("Initializing Kubo service");
 
-    let port = port_override.unwrap_or(config.discovery_port);
-    let data_dir = data_dir_override.unwrap_or_else(|| config.storage_data_dir.clone());
-    let nat = nat_override.unwrap_or_else(|| config.nat.clone());
-    let listen_addrs = listen_addrs_override.unwrap_or_else(|| config.listen_addrs.clone());
+    let kubo_service = KuboService::new(config)?;
+    kubo_service.check_alive().await?;
 
-    if !bootstrap_nodes.is_empty() {
-        info!("Using {} bootstrap node(s)", bootstrap_nodes.len());
-    }
-
-    info!("Using NAT configuration: {}", nat);
-    info!("Using listen addresses: {:?}", listen_addrs);
-
-    let storage_service = StorageService::new(
-        &data_dir,
-        config.storage_quota,
-        port,
-        config.max_peers,
-        bootstrap_nodes,
-        nat,
-        listen_addrs,
-    )
-    .await?;
-
-    info!("Storage service initialized successfully");
-    Ok(Arc::new(storage_service))
+    info!("Connected to Kubo at {}", config.kubo_api_url);
+    Ok(Arc::new(kubo_service))
 }
 
 pub fn initialize_extraction_service(
@@ -66,7 +40,7 @@ pub fn initialize_extraction_service(
 pub fn initialize_area_upload_service(
     cid_db: Arc<DatabaseService>,
     whosonfirst_db: Arc<DatabaseService>,
-    storage: Arc<StorageService>,
+    kubo: Arc<KuboService>,
     config: &Config,
     area_ids: Vec<u32>,
 ) -> super::InitializationResult<AreaUploadService> {
@@ -75,7 +49,7 @@ pub fn initialize_area_upload_service(
     let upload_service = AreaUploadService::new(
         cid_db,
         whosonfirst_db,
-        storage,
+        kubo,
         config.areas_dir.clone(),
         config.target_countries.clone(),
         area_ids,
@@ -91,9 +65,12 @@ pub fn print_startup_info(config: &Config, cli: &crate::cli::Cli) {
     info!("CID Mappings DB: {:?}", config.cid_db_path);
     info!("Areas Dir: {:?}", config.areas_dir);
     info!("Planet PMTiles: {:?}", config.planet_pmtiles_location);
-    info!("Storage Port: {}", config.discovery_port);
-    info!("Storage Data Dir: {:?}", config.storage_data_dir);
-    info!("Max Concurrent Extractions: {}", config.max_concurrent_extractions);
+    info!("Kubo API URL: {}", config.kubo_api_url);
+    info!("Pin on Upload: {}", config.pin_on_upload);
+    info!(
+        "Max Concurrent Extractions: {}",
+        config.max_concurrent_extractions
+    );
     info!("Target Countries: {:?}", config.target_countries);
     info!("Non-Interactive: {}", cli.is_non_interactive());
     info!("Skip Download: {}", cli.should_skip_download());

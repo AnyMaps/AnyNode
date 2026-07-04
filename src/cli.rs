@@ -17,19 +17,6 @@ pub struct Cli {
     pub no_extract: bool,
 
     #[arg(
-        long,
-        help = "Port for the Storage node (overrides STORAGE_DISCOVERY_PORT env var)"
-    )]
-    pub port: Option<u16>,
-
-    #[arg(
-        long,
-        value_name = "DIR",
-        help = "Data directory for Storage node (overrides STORAGE_DATA_DIR env var)"
-    )]
-    pub data_dir: Option<PathBuf>,
-
-    #[arg(
         short,
         long,
         value_name = "FILE",
@@ -37,32 +24,17 @@ pub struct Cli {
     )]
     pub config: Option<PathBuf>,
 
+    #[arg(long, help = "Override Kubo RPC API URL")]
+    pub kubo_api_url: Option<String>,
+
+    #[arg(long, help = "Skip pinning content after upload")]
+    pub no_pin: bool,
+
     #[arg(short, long, help = "Verbose output")]
     pub verbose: bool,
 
     #[arg(short, long, help = "Quiet mode (minimal output)")]
     pub quiet: bool,
-
-    #[arg(
-        long,
-        value_name = "SPR_URI",
-        help = "Bootstrap node SPR URI (can be repeated for multiple nodes)"
-    )]
-    pub bootstrap: Vec<String>,
-
-    #[arg(
-        long,
-        value_name = "METHOD",
-        help = "NAT traversal method: any, none, upnp, pmp, or extip:<IP> (overrides STORAGE_NAT env var)"
-    )]
-    pub nat: Option<String>,
-
-    #[arg(
-        long,
-        value_name = "ADDRS",
-        help = "Listen addresses (comma-separated multi-addresses, overrides STORAGE_LISTEN_ADDRS env var)"
-    )]
-    pub listen_addrs: Option<String>,
 
     #[arg(
         long,
@@ -75,14 +47,6 @@ pub struct Cli {
 impl Cli {
     pub fn parse_args() -> Self {
         Self::parse()
-    }
-
-    pub fn get_port(&self, env_port: Option<u16>) -> Option<u16> {
-        self.port.or(env_port)
-    }
-
-    pub fn get_data_dir(&self, env_dir: Option<PathBuf>) -> Option<PathBuf> {
-        self.data_dir.clone().or(env_dir)
     }
 
     pub fn is_non_interactive(&self) -> bool {
@@ -104,30 +68,6 @@ impl Cli {
             "debug"
         } else {
             "info"
-        }
-    }
-
-    pub fn get_bootstrap_nodes(&self, env_nodes: Vec<String>) -> Vec<String> {
-        if !self.bootstrap.is_empty() {
-            self.bootstrap.clone()
-        } else {
-            env_nodes
-        }
-    }
-
-    pub fn get_nat(&self, env_nat: String) -> String {
-        self.nat.clone().unwrap_or(env_nat)
-    }
-
-    pub fn get_listen_addrs(&self, env_addrs: Vec<String>) -> Vec<String> {
-        if let Some(addrs) = &self.listen_addrs {
-            addrs
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect()
-        } else {
-            env_addrs
         }
     }
 
